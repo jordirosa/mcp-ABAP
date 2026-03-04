@@ -1,0 +1,5 @@
+requests
+pydantic>=1.10.0
+fastmcp>=2.13.0
+xmltodict>=1.0.2
+python-dotenv>=1.0.0
