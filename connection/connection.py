@@ -12,10 +12,10 @@ if not APP_CONFIG["verify_ssl"]:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class LoginResponse(ApiResponse[BaseModel]):
-    """Response model for connection tool."""
+    """Response model for opening an authenticated SAP session."""
 
 class LogoutResponse(ApiResponse[BaseModel]):
-    """Response model for logout tool."""
+    """Response model for closing the current SAP session."""
 
 def ensure_login() -> tuple[bool, str]:
     """Ensure there is an active session with token.
@@ -58,14 +58,14 @@ def call_login() -> LoginResponse:
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",
-            "message": "Login failed: CSRF token is empty.",
+            "message": "SAP login failed because the CSRF token could not be retrieved.",
             "data": None
         })
     return LoginResponse.parse_obj({
         "result": True,
         "httpCode": 200,
         "httpReason": "OK",
-        "message": "Login successful.",
+        "message": "SAP session opened successfully.",
         "data": None
     })
 
@@ -79,6 +79,6 @@ def call_logout() -> LogoutResponse:
         "result": True,
         "httpCode": 200,
         "httpReason": "OK",
-        "message": "Logout successful.",
+        "message": "SAP session closed successfully.",
         "data": None
     })
