@@ -1,7 +1,7 @@
 import os
 
 from dotenv import load_dotenv
-from requests import request
+import requests
 
 # Cargar variables de entorno desde archivo .env
 load_dotenv()
@@ -25,4 +25,4 @@ if missing_keys:
         f"Por favor, configura el archivo .env correctamente."
     )
 
-SESSION: request.Session | None = None
+SESSION: requests.Session | None = None
