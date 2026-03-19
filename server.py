@@ -5,8 +5,10 @@ from configuration import *
 from connection.connection import *
 from cts.cts import *
 from deletion.deletion import *
+from ddic.db.settings import *
 from ddic.dataelements.dataelements import *
 from ddic.domains.domains import *
+from ddic.tables.tables import *
 from info_repository.info_repository import *
 
 mcp = FastMCP(name="ABAP Tools - MCP Server", version="1.0.0")
@@ -82,6 +84,122 @@ def cts_transport_create(
         requestText=requestText,
         objectUri=objectUri,
         operation=operation
+    )
+# endregion
+
+# region DDIC Table DB Settings
+@mcp.tool()
+def ddic_table_db_settings_read(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the table database settings should be read."),
+    tableName: str = Field(..., description="Technical name of the DDIC table whose database settings should be read.")
+) -> DdicTableDbSettingsReadResponse:
+    """Read the database settings of a DDIC table in one configured SAP system."""
+    return call_ddic_table_db_settings_read(systemId, tableName)
+
+
+@mcp.tool()
+def ddic_table_db_settings_update(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the table database settings will be updated."),
+    tableName: str = Field(..., description="Technical name of the DDIC table whose database settings will be updated."),
+    request: DdicTableDbSettingsUpdateRequest = Field(..., description="Set only the database settings attributes that should change. Omitted fields are kept as they are."),
+    transportNumber: str = Field("", description="Transport request number to use when updating database settings in a transportable package. Leave empty for local objects such as $TMP.")
+) -> DdicTableDbSettingsUpdateResponse:
+    """Update the database settings of a DDIC table in one configured SAP system. The tool locks the settings object, applies the changes, and unlocks it automatically. For transportable packages, provide the transport request number."""
+    lock_response = call_ddic_table_db_settings_lock(systemId, tableName)
+    if not lock_response.result or not lock_response.data:
+        return DdicTableDbSettingsUpdateResponse.parse_obj({
+            "result": False,
+            "httpCode": lock_response.httpCode,
+            "httpReason": lock_response.httpReason,
+            "message": lock_response.message or "Failed to lock table database settings",
+            "data": None
+        })
+
+    try:
+        return call_ddic_table_db_settings_update(
+            systemId=systemId,
+            tableName=tableName,
+            lockHandle=lock_response.data.lockHandle,
+            request=request,
+            transportNumber=transportNumber
+        )
+    finally:
+        call_ddic_table_db_settings_unlock(systemId, tableName, lock_response.data.lockHandle)
+# endregion
+
+# region DDIC Tables
+@mcp.tool()
+def ddic_table_create(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC table will be created."),
+    name: str = Field(..., description="Technical name of the DDIC table to create."),
+    description: str = Field(..., description="Short description of the DDIC table."),
+    packageName: str = Field("$TMP", description="Package where the DDIC table will be created. Use $TMP for local objects."),
+    transportNumber: str = Field("", description="Transport request number to use when creating the DDIC table in a transportable package. Leave empty for local objects such as $TMP."),
+    responsible: str = Field("", description="Responsible SAP user. If omitted, the configured SAP user is used."),
+    language: str = Field("", description="Language key for the DDIC table metadata. If omitted, the configured SAP language is used.")
+) -> DdicTableCreateResponse:
+    """Create a DDIC table in one configured SAP system. For transportable packages, provide the transport request number."""
+    return call_ddic_table_create(
+        systemId=systemId,
+        name=name,
+        description=description,
+        packageName=packageName,
+        transportNumber=transportNumber,
+        responsible=responsible,
+        language=language
+    )
+
+
+@mcp.tool()
+def ddic_table_read(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC table source should be read."),
+    name: str = Field(..., description="Technical name of the DDIC table to read.")
+) -> DdicTableReadResponse:
+    """Read the current source/main content of a DDIC table in one configured SAP system."""
+    return call_ddic_table_read(systemId, name)
+
+
+@mcp.tool()
+def ddic_table_update(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC table will be updated."),
+    name: str = Field(..., description="Technical name of the DDIC table to update."),
+    request: DdicTableUpdateRequest = Field(..., description="Replacement source for the DDIC table. Provide the full source/main content to store."),
+    transportNumber: str = Field("", description="Transport request number to use when updating a DDIC table in a transportable package. Leave empty for local objects such as $TMP.")
+) -> DdicTableUpdateResponse:
+    """Update the source/main content of a DDIC table in one configured SAP system. The tool locks the object, writes the new source, and unlocks it automatically. For transportable packages, provide the transport request number."""
+    lock_response = call_ddic_table_lock(systemId, name)
+    if not lock_response.result or not lock_response.data:
+        return DdicTableUpdateResponse.parse_obj({
+            "result": False,
+            "httpCode": lock_response.httpCode,
+            "httpReason": lock_response.httpReason,
+            "message": lock_response.message or "Failed to lock table",
+            "data": None
+        })
+
+    try:
+        return call_ddic_table_update(
+            systemId=systemId,
+            name=name,
+            lockHandle=lock_response.data.lockHandle,
+            request=request,
+            transportNumber=transportNumber
+        )
+    finally:
+        call_ddic_table_unlock(systemId, name, lock_response.data.lockHandle)
+
+
+@mcp.tool()
+def ddic_table_delete(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC table will be deleted."),
+    name: str = Field(..., description="Technical name of the DDIC table to delete."),
+    transportNumber: str = Field("", description="Optional transport request number to use for the deletion.")
+) -> DeletionDeleteResponse:
+    """Delete a DDIC table from one configured SAP system through the generic ADT deletion endpoint."""
+    return call_deletion_delete(
+        systemId=systemId,
+        objectUri=f"/sap/bc/adt/ddic/tables/{name.lower()}",
+        transportNumber=transportNumber
     )
 # endregion
 
