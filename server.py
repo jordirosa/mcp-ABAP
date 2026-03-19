@@ -1,6 +1,7 @@
 from fastmcp import FastMCP
 from pydantic import Field
 
+from activation.activation import *
 from configuration import *
 from connection.connection import *
 from cts.cts import *
@@ -46,6 +47,16 @@ def info_repository_search(systemId: str = Field(..., description="Identifier of
            objectType: str = Field("", description="Optional 4-character SAP object type filter such as PROG, CLAS, FUGR, TABL, DTEL, DOMA, INTF, or DDLS.")) -> InfoRepositorySearchResponse:
     """Search the SAP repository information system of one configured SAP system for development objects."""
     return call_info_repository_search(systemId, searchTerm, objectType=objectType)
+# endregion
+
+# region Activation
+@mcp.tool()
+def activation_activate(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the activation should run."),
+    request: ActivationActivateRequest = Field(..., description="One or more ADT object references to activate. Use ADT URIs such as /sap/bc/adt/ddic/domains/<name>, /sap/bc/adt/ddic/dataelements/<name>, /sap/bc/adt/ddic/tables/<name>, or /sap/bc/adt/ddic/db/settings/<table>.")
+) -> ActivationActivateResponse:
+    """Activate one or more ADT objects in one configured SAP system through the generic activation endpoint."""
+    return call_activation_activate(systemId, request)
 # endregion
 
 # region CTS

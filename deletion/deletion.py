@@ -24,6 +24,15 @@ class DeletionDeleteResponse(ApiResponse[DeletionDeleteOutput]):
 	"""Response model for generic ADT deletion."""
 
 
+def _ensure_list(value):
+	"""Normalize XML nodes that can appear either once or many times."""
+	if value is None or value == "":
+		return []
+	if isinstance(value, list):
+		return value
+	return [value]
+
+
 def _build_deletion_delete_payload(objectUri: str, transportNumber: str) -> str:
 	"""Build XML payload for generic ADT deletion."""
 	payload = {
@@ -45,8 +54,8 @@ def parse_deletion_delete_response(response) -> DeletionDeleteResponse:
 	try:
 		data_dict = xmltodict.parse(response.text)
 		result_root = data_dict.get("del:deletionResult", {})
-		object_root = result_root.get("del:object", {}) or {}
-		message_root = object_root.get("del:message", {}) or {}
+		object_root = _ensure_list(result_root.get("del:object"))[0] if _ensure_list(result_root.get("del:object")) else {}
+		message_root = _ensure_list(object_root.get("del:message"))[0] if isinstance(object_root, dict) and _ensure_list(object_root.get("del:message")) else {}
 
 		output = DeletionDeleteOutput(
 			uri=object_root.get("@adtcore:uri", ""),
