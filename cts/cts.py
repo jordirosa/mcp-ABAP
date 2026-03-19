@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 import xmltodict
 
-from configuration import APP_CONFIG
+from configuration import get_session, get_system_config
 import configuration
 from generics import ApiResponse
 from connection.connection import ensure_login
@@ -175,6 +175,7 @@ def parse_cts_transport_create_response(response) -> CtsTransportCreateResponse:
 
 
 def call_cts_transport_check(
+	systemId: str,
 	objectUri: str,
 	packageName: str,
 	operation: str = "I",
@@ -183,7 +184,7 @@ def call_cts_transport_check(
 ) -> CtsTransportCheckResponse:
 	"""Check whether an object and package combination requires a transport request."""
 	try:
-		is_logged_in, error_msg = ensure_login()
+		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
 			return CtsTransportCheckResponse.parse_obj({
 				"result": False,
@@ -193,7 +194,8 @@ def call_cts_transport_check(
 				"data": None
 			})
 
-		url = f"{APP_CONFIG['server']}/sap/bc/adt/cts/transportchecks"
+		system_config = get_system_config(systemId)
+		url = f"{system_config.server}/sap/bc/adt/cts/transportchecks"
 		headers = {
 			"Content-Type": "application/vnd.sap.as+xml; charset=UTF-8; dataname=com.sap.adt.transport.service.checkData",
 			"Accept": "application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.transport.service.checkData"
@@ -206,7 +208,7 @@ def call_cts_transport_check(
 			recordChanges=recordChanges
 		)
 
-		response = configuration.SESSION.post(url, headers=headers, data=payload.encode("utf-8"))
+		response = get_session(systemId).post(url, headers=headers, data=payload.encode("utf-8"))
 
 		if response.status_code != 200:
 			return CtsTransportCheckResponse.parse_obj({
@@ -230,6 +232,7 @@ def call_cts_transport_check(
 
 
 def call_cts_transport_create(
+	systemId: str,
 	packageName: str,
 	requestText: str,
 	objectUri: str,
@@ -237,7 +240,7 @@ def call_cts_transport_create(
 ) -> CtsTransportCreateResponse:
 	"""Create a transport request for a package and ADT object reference."""
 	try:
-		is_logged_in, error_msg = ensure_login()
+		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
 			return CtsTransportCreateResponse.parse_obj({
 				"result": False,
@@ -247,7 +250,8 @@ def call_cts_transport_create(
 				"data": None
 			})
 
-		url = f"{APP_CONFIG['server']}/sap/bc/adt/cts/transports"
+		system_config = get_system_config(systemId)
+		url = f"{system_config.server}/sap/bc/adt/cts/transports"
 		headers = {
 			"Content-Type": "application/vnd.sap.as+xml; charset=UTF-8; dataname=com.sap.adt.CreateCorrectionRequest.v1",
 			"Accept": "application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.CorrectionRequestResult, text/plain"
@@ -259,7 +263,7 @@ def call_cts_transport_create(
 			operation=operation
 		)
 
-		response = configuration.SESSION.post(url, headers=headers, data=payload.encode("utf-8"))
+		response = get_session(systemId).post(url, headers=headers, data=payload.encode("utf-8"))
 
 		if response.status_code != 200:
 			return CtsTransportCreateResponse.parse_obj({

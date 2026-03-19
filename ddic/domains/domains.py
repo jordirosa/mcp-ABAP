@@ -1,10 +1,10 @@
 from pydantic import BaseModel, Field
 import xmltodict
 
-from configuration import APP_CONFIG
+from configuration import get_session, get_system_config
 import configuration
 from generics import ApiResponse
-from connection.connection import ensure_login
+from connection.connection import build_adt_headers, ensure_login
 
 
 # region DDIC Domains
@@ -110,7 +110,6 @@ def _build_domain_create_payload(
 			"@adtcore:name": name,
 			"@adtcore:type": "DOMA/DD",
 			"@adtcore:masterLanguage": language,
-			"@adtcore:masterSystem": "",
 			"@adtcore:responsible": responsible,
 			"adtcore:packageRef": {
 				"@adtcore:name": package_name
@@ -197,14 +196,15 @@ def _parse_ddic_domain_response(response):
 	)
 
 
-def _get_ddic_domain_xml(name: str):
+def _get_ddic_domain_xml(systemId: str, name: str):
 	"""Fetch the raw ADT XML for a DDIC domain."""
-	url = f"{APP_CONFIG['server']}/sap/bc/adt/ddic/domains/{name.lower()}"
+	system_config = get_system_config(systemId)
+	url = f"{system_config.server}/sap/bc/adt/ddic/domains/{name.lower()}"
 	headers = {
 		"Accept": "application/vnd.sap.adt.domains.v1+xml, application/vnd.sap.adt.domains.v2+xml"
 	}
 
-	response = configuration.SESSION.get(url, headers=headers)
+	response = get_session(systemId).get(url, headers=headers)
 	return response
 
 
@@ -364,6 +364,7 @@ def parse_ddic_domain_lock_response(response) -> DdicDomainLockResponse:
 
 
 def call_ddic_domain_create(
+	systemId: str,
 	name: str,
 	description: str,
 	packageName: str = "$TMP",
@@ -373,7 +374,7 @@ def call_ddic_domain_create(
 ) -> DdicDomainCreateResponse:
 	"""Create a DDIC domain in the SAP system through ADT."""
 	try:
-		is_logged_in, error_msg = ensure_login()
+		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
 			return DdicDomainCreateResponse.parse_obj({
 				"result": False,
@@ -383,9 +384,10 @@ def call_ddic_domain_create(
 				"data": None
 			})
 
-		effective_language = language or APP_CONFIG.get("language") or "EN"
-		effective_responsible = responsible or APP_CONFIG.get("user") or ""
-		url = f"{APP_CONFIG['server']}/sap/bc/adt/ddic/domains"
+		system_config = get_system_config(systemId)
+		effective_language = language or system_config.language or "EN"
+		effective_responsible = responsible or system_config.user or ""
+		url = f"{system_config.server}/sap/bc/adt/ddic/domains"
 		headers = {
 			"Content-Type": "application/vnd.sap.adt.domains.v2+xml",
 			"Accept": "application/vnd.sap.adt.domains.v1+xml, application/vnd.sap.adt.domains.v2+xml"
@@ -401,7 +403,7 @@ def call_ddic_domain_create(
 			language=effective_language
 		)
 
-		response = configuration.SESSION.post(url, headers=headers, params=params, data=payload.encode("utf-8"))
+		response = get_session(systemId).post(url, headers=headers, params=params, data=payload.encode("utf-8"))
 
 		if response.status_code != 201:
 			return DdicDomainCreateResponse.parse_obj({
@@ -424,10 +426,10 @@ def call_ddic_domain_create(
 		})
 
 
-def call_ddic_domain_read(name: str) -> DdicDomainReadResponse:
+def call_ddic_domain_read(systemId: str, name: str) -> DdicDomainReadResponse:
 	"""Read a DDIC domain from the SAP system through ADT."""
 	try:
-		is_logged_in, error_msg = ensure_login()
+		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
 			return DdicDomainReadResponse.parse_obj({
 				"result": False,
@@ -437,7 +439,7 @@ def call_ddic_domain_read(name: str) -> DdicDomainReadResponse:
 				"data": None
 			})
 
-		response = _get_ddic_domain_xml(name)
+		response = _get_ddic_domain_xml(systemId, name)
 
 		if response.status_code != 200:
 			return DdicDomainReadResponse.parse_obj({
@@ -461,6 +463,7 @@ def call_ddic_domain_read(name: str) -> DdicDomainReadResponse:
 
 
 def call_ddic_domain_update(
+	systemId: str,
 	name: str,
 	lockHandle: str,
 	request: DdicDomainUpdateRequest,
@@ -468,7 +471,7 @@ def call_ddic_domain_update(
 ) -> DdicDomainUpdateResponse:
 	"""Update a DDIC domain in the SAP system through ADT."""
 	try:
-		is_logged_in, error_msg = ensure_login()
+		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
 			return DdicDomainUpdateResponse.parse_obj({
 				"result": False,
@@ -478,7 +481,7 @@ def call_ddic_domain_update(
 				"data": None
 			})
 
-		current_response = _get_ddic_domain_xml(name)
+		current_response = _get_ddic_domain_xml(systemId, name)
 		if current_response.status_code != 200:
 			return DdicDomainUpdateResponse.parse_obj({
 				"result": False,
@@ -488,7 +491,8 @@ def call_ddic_domain_update(
 				"data": None
 			})
 
-		url = f"{APP_CONFIG['server']}/sap/bc/adt/ddic/domains/{name.lower()}"
+		system_config = get_system_config(systemId)
+		url = f"{system_config.server}/sap/bc/adt/ddic/domains/{name.lower()}"
 		headers = {
 			"Content-Type": "application/vnd.sap.adt.domains.v2+xml; charset=utf-8",
 			"Accept": "application/vnd.sap.adt.domains.v1+xml, application/vnd.sap.adt.domains.v2+xml"
@@ -515,7 +519,7 @@ def call_ddic_domain_update(
 			fixValues=request.fixValues
 		)
 
-		response = configuration.SESSION.put(url, headers=headers, params=params, data=payload.encode("utf-8"))
+		response = get_session(systemId).put(url, headers=headers, params=params, data=payload.encode("utf-8"))
 
 		if response.status_code != 200:
 			return DdicDomainUpdateResponse.parse_obj({
@@ -545,10 +549,10 @@ def call_ddic_domain_update(
 		})
 
 
-def call_ddic_domain_lock(name: str, accessMode: str = "MODIFY") -> DdicDomainLockResponse:
+def call_ddic_domain_lock(systemId: str, name: str, accessMode: str = "MODIFY") -> DdicDomainLockResponse:
 	"""Lock a DDIC domain in the SAP system through ADT."""
 	try:
-		is_logged_in, error_msg = ensure_login()
+		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
 			return DdicDomainLockResponse.parse_obj({
 				"result": False,
@@ -558,16 +562,20 @@ def call_ddic_domain_lock(name: str, accessMode: str = "MODIFY") -> DdicDomainLo
 				"data": None
 			})
 
-		url = f"{APP_CONFIG['server']}/sap/bc/adt/ddic/domains/{name.lower()}"
-		headers = {
-			"Accept": "application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result;q=0.8, application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result2;q=0.9"
-		}
+		system_config = get_system_config(systemId)
+		url = f"{system_config.server}/sap/bc/adt/ddic/domains/{name.lower()}"
+		headers = build_adt_headers(
+			sessionType="stateful",
+			extra={
+				"Accept": "application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result;q=0.8, application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result2;q=0.9"
+			}
+		)
 		params = {
 			"_action": "LOCK",
 			"accessMode": accessMode
 		}
 
-		response = configuration.SESSION.post(url, headers=headers, params=params)
+		response = get_session(systemId).post(url, headers=headers, params=params)
 
 		if response.status_code != 200:
 			return DdicDomainLockResponse.parse_obj({
@@ -590,10 +598,10 @@ def call_ddic_domain_lock(name: str, accessMode: str = "MODIFY") -> DdicDomainLo
 		})
 
 
-def call_ddic_domain_unlock(name: str, lockHandle: str) -> DdicDomainUnlockResponse:
+def call_ddic_domain_unlock(systemId: str, name: str, lockHandle: str) -> DdicDomainUnlockResponse:
 	"""Unlock a DDIC domain in the SAP system through ADT."""
 	try:
-		is_logged_in, error_msg = ensure_login()
+		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
 			return DdicDomainUnlockResponse.parse_obj({
 				"result": False,
@@ -603,13 +611,15 @@ def call_ddic_domain_unlock(name: str, lockHandle: str) -> DdicDomainUnlockRespo
 				"data": None
 			})
 
-		url = f"{APP_CONFIG['server']}/sap/bc/adt/ddic/domains/{name.lower()}"
+		system_config = get_system_config(systemId)
+		url = f"{system_config.server}/sap/bc/adt/ddic/domains/{name.lower()}"
+		headers = build_adt_headers(sessionType="stateful")
 		params = {
 			"_action": "UNLOCK",
 			"lockHandle": lockHandle
 		}
 
-		response = configuration.SESSION.post(url, params=params)
+		response = get_session(systemId).post(url, headers=headers, params=params)
 
 		if response.status_code != 200:
 			return DdicDomainUnlockResponse.parse_obj({

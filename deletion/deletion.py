@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 import xmltodict
 
-from configuration import APP_CONFIG
+from configuration import get_session, get_system_config
 import configuration
 from generics import ApiResponse
 from connection.connection import ensure_login
@@ -77,10 +77,10 @@ def parse_deletion_delete_response(response) -> DeletionDeleteResponse:
 		})
 
 
-def call_deletion_delete(objectUri: str, transportNumber: str = "") -> DeletionDeleteResponse:
+def call_deletion_delete(systemId: str, objectUri: str, transportNumber: str = "") -> DeletionDeleteResponse:
 	"""Delete an ADT object using the generic deletion endpoint."""
 	try:
-		is_logged_in, error_msg = ensure_login()
+		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
 			return DeletionDeleteResponse.parse_obj({
 				"result": False,
@@ -90,7 +90,8 @@ def call_deletion_delete(objectUri: str, transportNumber: str = "") -> DeletionD
 				"data": None
 			})
 
-		url = f"{APP_CONFIG['server']}/sap/bc/adt/deletion/delete"
+		system_config = get_system_config(systemId)
+		url = f"{system_config.server}/sap/bc/adt/deletion/delete"
 		headers = {
 			"Content-Type": "application/vnd.sap.adt.deletion.request.v1+xml",
 			"Accept": "application/vnd.sap.adt.deletion.response.v1+xml"
@@ -100,7 +101,7 @@ def call_deletion_delete(objectUri: str, transportNumber: str = "") -> DeletionD
 			transportNumber=transportNumber
 		)
 
-		response = configuration.SESSION.post(url, headers=headers, data=payload.encode("utf-8"))
+		response = get_session(systemId).post(url, headers=headers, data=payload.encode("utf-8"))
 
 		if response.status_code != 200:
 			return DeletionDeleteResponse.parse_obj({

@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 import xmltodict
 
-from configuration import APP_CONFIG
+from configuration import get_session, get_system_config
 import configuration
 from generics import ApiResponse
 from connection.connection import ensure_login
@@ -73,7 +73,7 @@ def parse_info_repository_search_response(response) -> InfoRepositorySearchRespo
 			"data": None
 		})
 
-def call_info_repository_search(query: str, maxResults: int = 50, objectType: str = "") -> InfoRepositorySearchResponse:
+def call_info_repository_search(systemId: str, query: str, maxResults: int = 50, objectType: str = "") -> InfoRepositorySearchResponse:
 	"""Search for objects in the SAP repository information system.
 
 	Args:
@@ -85,7 +85,7 @@ def call_info_repository_search(query: str, maxResults: int = 50, objectType: st
 		InfoRepositorySearchResponse: Response model containing the search results.
 	"""
 	try:
-		is_logged_in, error_msg = ensure_login()
+		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
 			return InfoRepositorySearchResponse.parse_obj({
 				"result": False,
@@ -96,7 +96,8 @@ def call_info_repository_search(query: str, maxResults: int = 50, objectType: st
 			})
 
 		# Build URL with query and maxResults
-		url = f"{APP_CONFIG['server']}/sap/bc/adt/repository/informationsystem/search?operation=quickSearch&query={query}&maxResults={maxResults}"
+		system_config = get_system_config(systemId)
+		url = f"{system_config.server}/sap/bc/adt/repository/informationsystem/search?operation=quickSearch&query={query}&maxResults={maxResults}"
 		
 		# Add objectType parameter if provided
 		if objectType:
@@ -106,7 +107,7 @@ def call_info_repository_search(query: str, maxResults: int = 50, objectType: st
 			"Accept": "application/xml"
 		}
 
-		response = configuration.SESSION.get(url, headers=headers)
+		response = get_session(systemId).get(url, headers=headers)
 		
 		if response.status_code != 200:
 			return InfoRepositorySearchResponse.parse_obj({
