@@ -418,6 +418,19 @@ def call_ddic_dataelement_read(systemId: str, name: str) -> DdicDataElementReadR
 		})
 
 
+def call_ddic_dataelement_read_raw_content(systemId: str, name: str) -> str:
+	"""Read the raw ADT XML of a DDIC data element."""
+	is_logged_in, error_msg = ensure_login(systemId)
+	if not is_logged_in:
+		raise RuntimeError(f"Cannot read the raw DDIC data element because no SAP session is available: {error_msg}")
+
+	response = _get_ddic_dataelement_xml(systemId, name)
+	if response.status_code != 200:
+		raise RuntimeError(f"ADT rejected the raw DDIC data element read request: {response.text}")
+
+	return response.text
+
+
 def call_ddic_dataelement_update(
 	systemId: str,
 	name: str,
@@ -482,6 +495,63 @@ def call_ddic_dataelement_update(
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
 			"message": f"Unexpected error while updating the DDIC data element: {str(e)}",
+			"data": None
+		})
+
+
+def call_ddic_dataelement_update_raw(
+	systemId: str,
+	name: str,
+	lockHandle: str,
+	rawXml: str,
+	transportNumber: str = "",
+) -> DdicDataElementUpdateResponse:
+	"""Update a DDIC data element using raw ADT XML."""
+	try:
+		is_logged_in, error_msg = ensure_login(systemId)
+		if not is_logged_in:
+			return DdicDataElementUpdateResponse.parse_obj({
+				"result": False,
+				"httpCode": 401,
+				"httpReason": "Unauthorized",
+				"message": f"Cannot update the DDIC data element because no SAP session is available: {error_msg}",
+				"data": None
+			})
+
+		system_config = get_system_config(systemId)
+		url = f"{system_config.server}/sap/bc/adt/ddic/dataelements/{name.lower()}"
+		headers = {
+			"Content-Type": "application/vnd.sap.adt.dataelements.v2+xml; charset=utf-8",
+			"Accept": "application/vnd.sap.adt.dataelements.v1+xml, application/vnd.sap.adt.dataelements.v2+xml"
+		}
+		params = {"lockHandle": lockHandle}
+		if transportNumber:
+			params["corrNr"] = transportNumber
+
+		response = get_session(systemId).put(url, headers=headers, params=params, data=rawXml.encode("utf-8"))
+		if response.status_code != 200:
+			return DdicDataElementUpdateResponse.parse_obj({
+				"result": False,
+				"httpCode": response.status_code,
+				"httpReason": response.reason,
+				"message": f"ADT rejected the DDIC data element raw update request. For transportable packages, ensure that corrNr references a valid transport request: {response.text}",
+				"data": None
+			})
+
+		output = _parse_ddic_dataelement_response(response)
+		return DdicDataElementUpdateResponse.parse_obj({
+			"result": True,
+			"httpCode": response.status_code,
+			"httpReason": response.reason,
+			"message": "DDIC data element updated successfully from raw XML.",
+			"data": output
+		})
+	except Exception as e:
+		return DdicDataElementUpdateResponse.parse_obj({
+			"result": False,
+			"httpCode": 500,
+			"httpReason": "Internal Server Error",
+			"message": f"Unexpected error while updating the DDIC data element from raw XML: {str(e)}",
 			"data": None
 		})
 

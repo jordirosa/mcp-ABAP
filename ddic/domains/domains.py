@@ -462,6 +462,19 @@ def call_ddic_domain_read(systemId: str, name: str) -> DdicDomainReadResponse:
 		})
 
 
+def call_ddic_domain_read_raw_content(systemId: str, name: str) -> str:
+	"""Read the raw ADT XML of a DDIC domain."""
+	is_logged_in, error_msg = ensure_login(systemId)
+	if not is_logged_in:
+		raise RuntimeError(f"Cannot read the raw DDIC domain because no SAP session is available: {error_msg}")
+
+	response = _get_ddic_domain_xml(systemId, name)
+	if response.status_code != 200:
+		raise RuntimeError(f"ADT rejected the raw DDIC domain read request: {response.text}")
+
+	return response.text
+
+
 def call_ddic_domain_update(
 	systemId: str,
 	name: str,
@@ -545,6 +558,63 @@ def call_ddic_domain_update(
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
 			"message": f"Unexpected error while updating the DDIC domain: {str(e)}",
+			"data": None
+		})
+
+
+def call_ddic_domain_update_raw(
+	systemId: str,
+	name: str,
+	lockHandle: str,
+	rawXml: str,
+	transportNumber: str = "",
+) -> DdicDomainUpdateResponse:
+	"""Update a DDIC domain using raw ADT XML."""
+	try:
+		is_logged_in, error_msg = ensure_login(systemId)
+		if not is_logged_in:
+			return DdicDomainUpdateResponse.parse_obj({
+				"result": False,
+				"httpCode": 401,
+				"httpReason": "Unauthorized",
+				"message": f"Cannot update the DDIC domain because no SAP session is available: {error_msg}",
+				"data": None
+			})
+
+		system_config = get_system_config(systemId)
+		url = f"{system_config.server}/sap/bc/adt/ddic/domains/{name.lower()}"
+		headers = {
+			"Content-Type": "application/vnd.sap.adt.domains.v2+xml; charset=utf-8",
+			"Accept": "application/vnd.sap.adt.domains.v1+xml, application/vnd.sap.adt.domains.v2+xml"
+		}
+		params = {"lockHandle": lockHandle}
+		if transportNumber:
+			params["corrNr"] = transportNumber
+
+		response = get_session(systemId).put(url, headers=headers, params=params, data=rawXml.encode("utf-8"))
+		if response.status_code != 200:
+			return DdicDomainUpdateResponse.parse_obj({
+				"result": False,
+				"httpCode": response.status_code,
+				"httpReason": response.reason,
+				"message": f"ADT rejected the DDIC domain raw update request. For transportable packages, ensure that corrNr references a valid transport request: {response.text}",
+				"data": None
+			})
+
+		output = _parse_ddic_domain_response(response)
+		return DdicDomainUpdateResponse.parse_obj({
+			"result": True,
+			"httpCode": response.status_code,
+			"httpReason": response.reason,
+			"message": "DDIC domain updated successfully from raw XML.",
+			"data": output
+		})
+	except Exception as e:
+		return DdicDomainUpdateResponse.parse_obj({
+			"result": False,
+			"httpCode": 500,
+			"httpReason": "Internal Server Error",
+			"message": f"Unexpected error while updating the DDIC domain from raw XML: {str(e)}",
 			"data": None
 		})
 

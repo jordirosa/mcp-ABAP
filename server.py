@@ -10,7 +10,9 @@ from ddic.db.settings import *
 from ddic.dataelements.dataelements import *
 from ddic.domains.domains import *
 from ddic.tables.tables import *
+from generics import FileTransferOutput, FileTransferResponse
 from info_repository.info_repository import *
+from utils import *
 
 mcp = FastMCP(name="ABAP Tools - MCP Server", version="1.0.0")
 print("FastMCP server object created.")
@@ -136,6 +138,70 @@ def ddic_table_db_settings_update(
         )
     finally:
         call_ddic_table_db_settings_unlock(systemId, tableName, lock_response.data.lockHandle)
+
+
+@mcp.tool()
+def ddic_table_db_settings_read_to_file(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the table database settings should be read."),
+    tableName: str = Field(..., description="Technical name of the DDIC table whose database settings should be downloaded."),
+    filePath: str = Field(..., description="Absolute local file path where the raw ADT XML will be stored.")
+) -> FileTransferResponse:
+    """Download the raw ADT XML of DDIC table database settings to a local file. The XML root is `ts:tableSettings` and commonly includes `ts:dataClassCategory`, `ts:sizeCategory`, `ts:buffering`, `ts:storageType`, and `ts:loggingEnabled`. Use this when the object content may be too large for regular tool responses."""
+    try:
+        content = call_ddic_table_db_settings_read_raw_content(systemId, tableName)
+        size_bytes = write_text_file(filePath, content)
+        return build_file_transfer_response(
+            filePath=filePath,
+            uri=f"/sap/bc/adt/ddic/db/settings/{tableName.lower()}",
+            mimeType="application/vnd.sap.adt.table.settings.v2+xml",
+            sizeBytes=size_bytes,
+            message="DDIC table database settings downloaded to local file successfully."
+        )
+    except ValueError as e:
+        return build_file_transfer_error(str(e), 400, "Bad Request")
+    except Exception as e:
+        return build_file_transfer_error(f"Failed to download DDIC table database settings to file: {str(e)}")
+
+
+@mcp.tool()
+def ddic_table_db_settings_write_from_file(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the table database settings will be updated."),
+    tableName: str = Field(..., description="Technical name of the DDIC table whose database settings will be uploaded."),
+    filePath: str = Field(..., description="Absolute local file path of the raw ADT XML to upload. The file must keep the same format returned by ddic_table_db_settings_read_to_file."),
+    transportNumber: str = Field("", description="Transport request number to use when updating database settings in a transportable package. Leave empty for local objects such as $TMP.")
+) -> FileTransferResponse:
+    """Upload raw ADT XML from a local file to update DDIC table database settings. The file should preserve the `ts:tableSettings` structure returned by SAP and use the downloaded file as the template to edit. Use this when the object content may be too large for regular tool responses."""
+    try:
+        content, size_bytes = read_text_file(filePath)
+        lock_response = call_ddic_table_db_settings_lock(systemId, tableName)
+        if not lock_response.result or not lock_response.data:
+            return build_file_transfer_error(lock_response.message or "Failed to lock table database settings", lock_response.httpCode or 500, lock_response.httpReason or "Internal Server Error")
+
+        try:
+            update_response = call_ddic_table_db_settings_update_raw(
+                systemId=systemId,
+                tableName=tableName,
+                lockHandle=lock_response.data.lockHandle,
+                rawXml=content,
+                transportNumber=transportNumber
+            )
+        finally:
+            call_ddic_table_db_settings_unlock(systemId, tableName, lock_response.data.lockHandle)
+
+        if not update_response.result:
+            return build_file_transfer_error(update_response.message or "Failed to upload DDIC table database settings from file", update_response.httpCode or 500, update_response.httpReason or "Internal Server Error")
+
+        return build_file_transfer_response(
+            filePath=filePath,
+            uri=f"/sap/bc/adt/ddic/db/settings/{tableName.lower()}",
+            mimeType="application/vnd.sap.adt.table.settings.v2+xml",
+            sizeBytes=size_bytes,
+            message="DDIC table database settings uploaded from local file successfully."
+        )
+    except ValueError as e:
+        return build_file_transfer_error(str(e), 400, "Bad Request")
+    except Exception as e:
+        return build_file_transfer_error(f"Failed to upload DDIC table database settings from file: {str(e)}")
 # endregion
 
 # region DDIC Tables
@@ -212,6 +278,70 @@ def ddic_table_delete(
         objectUri=f"/sap/bc/adt/ddic/tables/{name.lower()}",
         transportNumber=transportNumber
     )
+
+
+@mcp.tool()
+def ddic_table_read_to_file(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC table source should be read."),
+    name: str = Field(..., description="Technical name of the DDIC table to download."),
+    filePath: str = Field(..., description="Absolute local file path where the raw `source/main` text will be stored.")
+) -> FileTransferResponse:
+    """Download the raw `source/main` text of a DDIC table to a local file. The file content is the exact SAP source, typically beginning with a table definition such as `define table ...`. Use this when the object content may be too large for regular tool responses."""
+    try:
+        content = call_ddic_table_read_raw_content(systemId, name)
+        size_bytes = write_text_file(filePath, content)
+        return build_file_transfer_response(
+            filePath=filePath,
+            uri=f"/sap/bc/adt/ddic/tables/{name.lower()}/source/main",
+            mimeType="text/plain",
+            sizeBytes=size_bytes,
+            message="DDIC table source downloaded to local file successfully."
+        )
+    except ValueError as e:
+        return build_file_transfer_error(str(e), 400, "Bad Request")
+    except Exception as e:
+        return build_file_transfer_error(f"Failed to download DDIC table source to file: {str(e)}")
+
+
+@mcp.tool()
+def ddic_table_write_from_file(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC table will be updated."),
+    name: str = Field(..., description="Technical name of the DDIC table to upload."),
+    filePath: str = Field(..., description="Absolute local file path of the raw `source/main` text to upload. The file must keep the same format returned by ddic_table_read_to_file."),
+    transportNumber: str = Field("", description="Transport request number to use when updating a DDIC table in a transportable package. Leave empty for local objects such as $TMP.")
+) -> FileTransferResponse:
+    """Upload raw `source/main` text from a local file to update a DDIC table. Use the downloaded file as the template and preserve the SAP source format. Use this when the object content may be too large for regular tool responses."""
+    try:
+        content, size_bytes = read_text_file(filePath)
+        lock_response = call_ddic_table_lock(systemId, name)
+        if not lock_response.result or not lock_response.data:
+            return build_file_transfer_error(lock_response.message or "Failed to lock table", lock_response.httpCode or 500, lock_response.httpReason or "Internal Server Error")
+
+        try:
+            update_response = call_ddic_table_update(
+                systemId=systemId,
+                name=name,
+                lockHandle=lock_response.data.lockHandle,
+                request=DdicTableUpdateRequest(source=content),
+                transportNumber=transportNumber
+            )
+        finally:
+            call_ddic_table_unlock(systemId, name, lock_response.data.lockHandle)
+
+        if not update_response.result:
+            return build_file_transfer_error(update_response.message or "Failed to upload DDIC table from file", update_response.httpCode or 500, update_response.httpReason or "Internal Server Error")
+
+        return build_file_transfer_response(
+            filePath=filePath,
+            uri=f"/sap/bc/adt/ddic/tables/{name.lower()}/source/main",
+            mimeType="text/plain",
+            sizeBytes=size_bytes,
+            message="DDIC table source uploaded from local file successfully."
+        )
+    except ValueError as e:
+        return build_file_transfer_error(str(e), 400, "Bad Request")
+    except Exception as e:
+        return build_file_transfer_error(f"Failed to upload DDIC table source from file: {str(e)}")
 # endregion
 
 # region DDIC Data Elements
@@ -288,6 +418,70 @@ def ddic_dataelement_delete(
         objectUri=f"/sap/bc/adt/ddic/dataelements/{name.lower()}",
         transportNumber=transportNumber
     )
+
+
+@mcp.tool()
+def ddic_dataelement_read_to_file(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC data element should be read."),
+    name: str = Field(..., description="Technical name of the DDIC data element to download."),
+    filePath: str = Field(..., description="Absolute local file path where the raw ADT XML will be stored.")
+) -> FileTransferResponse:
+    """Download the raw ADT XML of a DDIC data element to a local file. The XML root is `blue:wbobj` and the main payload usually lives in `dtel:dataElement`, including fields such as `dtel:typeKind`, `dtel:typeName`, `dtel:dataType`, labels, and search help properties. Use this when the object content may be too large for regular tool responses."""
+    try:
+        content = call_ddic_dataelement_read_raw_content(systemId, name)
+        size_bytes = write_text_file(filePath, content)
+        return build_file_transfer_response(
+            filePath=filePath,
+            uri=f"/sap/bc/adt/ddic/dataelements/{name.lower()}",
+            mimeType="application/vnd.sap.adt.dataelements.v2+xml",
+            sizeBytes=size_bytes,
+            message="DDIC data element downloaded to local file successfully."
+        )
+    except ValueError as e:
+        return build_file_transfer_error(str(e), 400, "Bad Request")
+    except Exception as e:
+        return build_file_transfer_error(f"Failed to download DDIC data element to file: {str(e)}")
+
+
+@mcp.tool()
+def ddic_dataelement_write_from_file(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC data element will be updated."),
+    name: str = Field(..., description="Technical name of the DDIC data element to upload."),
+    filePath: str = Field(..., description="Absolute local file path of the raw ADT XML to upload. The file must keep the same format returned by ddic_dataelement_read_to_file."),
+    transportNumber: str = Field("", description="Transport request number to use when updating a DDIC data element in a transportable package. Leave empty for local objects such as $TMP.")
+) -> FileTransferResponse:
+    """Upload raw ADT XML from a local file to update a DDIC data element. The file should preserve the `blue:wbobj` and `dtel:dataElement` structure returned by SAP and use the downloaded file as the template to edit. Use this when the object content may be too large for regular tool responses."""
+    try:
+        content, size_bytes = read_text_file(filePath)
+        lock_response = call_ddic_dataelement_lock(systemId, name)
+        if not lock_response.result or not lock_response.data:
+            return build_file_transfer_error(lock_response.message or "Failed to lock data element", lock_response.httpCode or 500, lock_response.httpReason or "Internal Server Error")
+
+        try:
+            update_response = call_ddic_dataelement_update_raw(
+                systemId=systemId,
+                name=name,
+                lockHandle=lock_response.data.lockHandle,
+                rawXml=content,
+                transportNumber=transportNumber
+            )
+        finally:
+            call_ddic_dataelement_unlock(systemId, name, lock_response.data.lockHandle)
+
+        if not update_response.result:
+            return build_file_transfer_error(update_response.message or "Failed to upload DDIC data element from file", update_response.httpCode or 500, update_response.httpReason or "Internal Server Error")
+
+        return build_file_transfer_response(
+            filePath=filePath,
+            uri=f"/sap/bc/adt/ddic/dataelements/{name.lower()}",
+            mimeType="application/vnd.sap.adt.dataelements.v2+xml",
+            sizeBytes=size_bytes,
+            message="DDIC data element uploaded from local file successfully."
+        )
+    except ValueError as e:
+        return build_file_transfer_error(str(e), 400, "Bad Request")
+    except Exception as e:
+        return build_file_transfer_error(f"Failed to upload DDIC data element from file: {str(e)}")
 # endregion
 
 # region DDIC Domains
@@ -364,6 +558,70 @@ def ddic_domain_delete(
         objectUri=f"/sap/bc/adt/ddic/domains/{name.lower()}",
         transportNumber=transportNumber
     )
+
+
+@mcp.tool()
+def ddic_domain_read_to_file(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC domain should be read."),
+    name: str = Field(..., description="Technical name of the DDIC domain to download."),
+    filePath: str = Field(..., description="Absolute local file path where the raw ADT XML will be stored.")
+) -> FileTransferResponse:
+    """Download the raw ADT XML of a DDIC domain to a local file. The XML root is `doma:domain` and the most relevant sections usually include `doma:typeInformation`, `doma:outputInformation`, and `doma:valueInformation`. Use this when the object content may be too large for regular tool responses."""
+    try:
+        content = call_ddic_domain_read_raw_content(systemId, name)
+        size_bytes = write_text_file(filePath, content)
+        return build_file_transfer_response(
+            filePath=filePath,
+            uri=f"/sap/bc/adt/ddic/domains/{name.lower()}",
+            mimeType="application/vnd.sap.adt.domains.v2+xml",
+            sizeBytes=size_bytes,
+            message="DDIC domain downloaded to local file successfully."
+        )
+    except ValueError as e:
+        return build_file_transfer_error(str(e), 400, "Bad Request")
+    except Exception as e:
+        return build_file_transfer_error(f"Failed to download DDIC domain to file: {str(e)}")
+
+
+@mcp.tool()
+def ddic_domain_write_from_file(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC domain will be updated."),
+    name: str = Field(..., description="Technical name of the DDIC domain to upload."),
+    filePath: str = Field(..., description="Absolute local file path of the raw ADT XML to upload. The file must keep the same format returned by ddic_domain_read_to_file."),
+    transportNumber: str = Field("", description="Transport request number to use when updating a DDIC domain in a transportable package. Leave empty for local objects such as $TMP.")
+) -> FileTransferResponse:
+    """Upload raw ADT XML from a local file to update a DDIC domain. The file should preserve the `doma:domain` structure returned by SAP and use the downloaded file as the template to edit. Use this when the object content may be too large for regular tool responses."""
+    try:
+        content, size_bytes = read_text_file(filePath)
+        lock_response = call_ddic_domain_lock(systemId, name)
+        if not lock_response.result or not lock_response.data:
+            return build_file_transfer_error(lock_response.message or "Failed to lock domain", lock_response.httpCode or 500, lock_response.httpReason or "Internal Server Error")
+
+        try:
+            update_response = call_ddic_domain_update_raw(
+                systemId=systemId,
+                name=name,
+                lockHandle=lock_response.data.lockHandle,
+                rawXml=content,
+                transportNumber=transportNumber
+            )
+        finally:
+            call_ddic_domain_unlock(systemId, name, lock_response.data.lockHandle)
+
+        if not update_response.result:
+            return build_file_transfer_error(update_response.message or "Failed to upload DDIC domain from file", update_response.httpCode or 500, update_response.httpReason or "Internal Server Error")
+
+        return build_file_transfer_response(
+            filePath=filePath,
+            uri=f"/sap/bc/adt/ddic/domains/{name.lower()}",
+            mimeType="application/vnd.sap.adt.domains.v2+xml",
+            sizeBytes=size_bytes,
+            message="DDIC domain uploaded from local file successfully."
+        )
+    except ValueError as e:
+        return build_file_transfer_error(str(e), 400, "Bad Request")
+    except Exception as e:
+        return build_file_transfer_error(f"Failed to upload DDIC domain from file: {str(e)}")
 # endregion
 
 if __name__ == "__main__":

@@ -317,6 +317,19 @@ def call_ddic_table_read(systemId: str, name: str) -> DdicTableReadResponse:
 		})
 
 
+def call_ddic_table_read_raw_content(systemId: str, name: str) -> str:
+	"""Read the raw source/main text of a DDIC table."""
+	is_logged_in, error_msg = ensure_login(systemId)
+	if not is_logged_in:
+		raise RuntimeError(f"Cannot read the raw DDIC table source because no SAP session is available: {error_msg}")
+
+	response = _get_ddic_table_source(systemId, name)
+	if response.status_code != 200:
+		raise RuntimeError(f"ADT rejected the raw DDIC table read request: {response.text}")
+
+	return response.text
+
+
 def call_ddic_table_update(
 	systemId: str,
 	name: str,
