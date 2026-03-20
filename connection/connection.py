@@ -3,82 +3,128 @@ from requests.auth import HTTPBasicAuth
 from pydantic import BaseModel
 import urllib3
 
-from configuration import APP_CONFIG
+from configuration import get_session, get_system_config, set_session
 import configuration
 from generics import ApiResponse
 
-# Suprimir warnings de SSL solo si verify_ssl est  deshabilitado
-if not APP_CONFIG["verify_ssl"]:
+
+if any(not config.verify_ssl for config in configuration.SYSTEM_CONFIGS.values()):
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+
 class LoginResponse(ApiResponse[BaseModel]):
-    """Response model for connection tool."""
+    """Response model for opening an authenticated SAP session."""
+
 
 class LogoutResponse(ApiResponse[BaseModel]):
-    """Response model for logout tool."""
+    """Response model for closing the current SAP session."""
 
-def ensure_login() -> tuple[bool, str]:
-    """Ensure there is an active session with token.
 
-    Returns:
-        tuple: (is_logged_in: bool, error_message: str)
-    """
-    if configuration.SESSION is None:
-        return False, "Login required: No active session. Please call login first."
+def build_adt_headers(
+    *,
+    sessionType: str = "stateless",
+    includeCsrfToken: bool = False,
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Build ADT request headers with an explicit SAP session type."""
+    headers = {
+        "X-sap-adt-sessiontype": sessionType
+    }
+
+    if includeCsrfToken:
+        headers["X-CSRF-Token"] = "Fetch"
+
+    if extra:
+        headers.update(extra)
+
+    return headers
+
+
+def ensure_login(systemId: str) -> tuple[bool, str]:
+    """Ensure there is an active session for one SAP system."""
+    if get_session(systemId) is None:
+        return False, f"Login required for system {systemId}: no active session. Call login first."
 
     return True, ""
 
-def get_csrf_token() -> str:
-    """Fetch CSRF token from SAP server and initialize session.
 
-    Returns:
-        CSRF token string needed for POST/PUT/DELETE operations
-    """
-    # Initialize session if not exists
-    if configuration.SESSION is None:
-        configuration.SESSION = requests.Session()
-        configuration.SESSION.auth = HTTPBasicAuth(APP_CONFIG["user"], APP_CONFIG["password"])
-        configuration.SESSION.verify = APP_CONFIG["verify_ssl"]
-        configuration.SESSION.headers.pop("X-CSRF-Token", None)
+def get_csrf_token(systemId: str) -> str:
+    """Fetch the CSRF token for one SAP system and initialize its session if needed."""
+    system_config = get_system_config(systemId)
+    session = get_session(systemId)
 
-    url = f"{APP_CONFIG['server']}/sap/bc/adt/discovery?sap-client={APP_CONFIG['client']}&sap-language={APP_CONFIG['language']}"
-    headers = {
-        "X-CSRF-Token": "Fetch"
-    }
+    if session is None:
+        session = requests.Session()
+        session.auth = HTTPBasicAuth(system_config.user, system_config.password)
+        session.verify = system_config.verify_ssl
+        session.headers.pop("X-CSRF-Token", None)
+        set_session(systemId, session)
 
-    # Use session to maintain cookies
-    response = configuration.SESSION.get(url, headers=headers)
-    configuration.SESSION.headers.update({"X-CSRF-Token": response.headers.get("X-CSRF-Token", "")})
+    url = (
+        f"{system_config.server}/sap/bc/adt/discovery"
+        f"?sap-client={system_config.client}&sap-language={system_config.language}"
+    )
+    headers = build_adt_headers(includeCsrfToken=True)
+
+    response = session.get(url, headers=headers)
+    session.headers.update({"X-CSRF-Token": response.headers.get("X-CSRF-Token", "")})
     return response.headers.get("X-CSRF-Token", "")
 
-def call_login() -> LoginResponse:
-    get_csrf_token()
-    if not configuration.SESSION:
+
+def call_login(systemId: str) -> LoginResponse:
+    """Open the authenticated SAP session for one configured system."""
+    try:
+        system_config = get_system_config(systemId)
+    except KeyError as exc:
+        return LoginResponse.parse_obj({
+            "result": False,
+            "httpCode": 404,
+            "httpReason": "Not Found",
+            "message": str(exc),
+            "data": None
+        })
+
+    get_csrf_token(systemId)
+    if not get_session(systemId):
         return LoginResponse.parse_obj({
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",
-            "message": "Login failed: CSRF token is empty.",
+            "message": f"SAP login failed for system {system_config.id} because the CSRF token could not be retrieved.",
             "data": None
         })
+
     return LoginResponse.parse_obj({
         "result": True,
         "httpCode": 200,
         "httpReason": "OK",
-        "message": "Login successful.",
+        "message": f"SAP session opened successfully for system {system_config.id}.",
         "data": None
     })
 
-def call_logout() -> LogoutResponse:
-    # Close session if exists
-    if configuration.SESSION:
-        configuration.SESSION.close()
-        configuration.SESSION = None
+
+def call_logout(systemId: str) -> LogoutResponse:
+    """Close the SAP session for one configured system."""
+    try:
+        system_config = get_system_config(systemId)
+    except KeyError as exc:
+        return LogoutResponse.parse_obj({
+            "result": False,
+            "httpCode": 404,
+            "httpReason": "Not Found",
+            "message": str(exc),
+            "data": None
+        })
+
+    session = get_session(systemId)
+    if session:
+        session.close()
+        set_session(systemId, None)
 
     return LogoutResponse.parse_obj({
         "result": True,
         "httpCode": 200,
         "httpReason": "OK",
-        "message": "Logout successful.",
+        "message": f"SAP session closed successfully for system {system_config.id}.",
         "data": None
     })
