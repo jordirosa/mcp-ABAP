@@ -24,6 +24,7 @@ class SapSystemConfig(BaseModel):
     client: str = Field(..., description="SAP client.")
     language: str = Field("EN", description="Default SAP logon language.")
     verify_ssl: bool = Field(False, description="Whether SSL certificates must be verified.")
+    sap_gui_connection_name: str | None = Field(None, description="Optional SAP Logon entry name used to open SAP GUI sessions.")
 
 
 class SapSystemInfo(BaseModel):
@@ -75,7 +76,8 @@ def _load_legacy_single_system() -> list[dict]:
         "password": password,
         "client": client,
         "language": os.getenv("SAP_LANGUAGE", "EN"),
-        "verify_ssl": _parse_verify_ssl(os.getenv("SAP_VERIFY_SSL", "false"))
+        "verify_ssl": _parse_verify_ssl(os.getenv("SAP_VERIFY_SSL", "false")),
+        "sap_gui_connection_name": os.getenv("SAP_GUI_CONNECTION_NAME")
     }]
 
 
@@ -125,7 +127,12 @@ def _load_system_configs() -> dict[str, SapSystemConfig]:
             password=str(raw_system["password"]),
             client=str(raw_system["client"]),
             language=str(raw_system.get("language", "EN")),
-            verify_ssl=_parse_verify_ssl(raw_system.get("verify_ssl", False))
+            verify_ssl=_parse_verify_ssl(raw_system.get("verify_ssl", False)),
+            sap_gui_connection_name=(
+                str(raw_system["sap_gui_connection_name"])
+                if raw_system.get("sap_gui_connection_name")
+                else None
+            )
         )
 
     return configs

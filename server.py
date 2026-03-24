@@ -11,6 +11,7 @@ from ddic.dataelements.dataelements import *
 from ddic.domains.domains import *
 from ddic.tables.tables import *
 from generics import FileTransferOutput, FileTransferResponse
+from gui.gui import *
 from info_repository.info_repository import *
 from utils import *
 
@@ -41,6 +42,91 @@ def logout(
     """Close the SAP session for one configured system and clear its stored CSRF token."""
     return call_logout(systemId)
 #endregion
+
+# region SAP GUI
+@mcp.tool()
+def sap_gui_sessions_list() -> SapGuiSessionListResponse:
+    """List the SAP GUI scripting sessions currently registered in the MCP server."""
+    return call_sap_gui_sessions_list()
+
+
+@mcp.tool()
+def sap_gui_session_open(
+    systemId: str = Field(..., description="Identifier of the configured SAP system whose SAP GUI connection should be opened. The system must define sap_gui_connection_name in the MCP configuration.")
+) -> SapGuiSessionOpenResponse:
+    """Open one new SAP GUI scripting session for a configured SAP system using its SAP Logon connection name from the MCP configuration."""
+    return call_sap_gui_session_open(systemId)
+
+
+@mcp.tool()
+def sap_gui_session_close(
+    guiSessionId: str = Field(..., description="Internal SAP GUI scripting session identifier returned by sap_gui_session_open.")
+) -> SapGuiSessionCloseResponse:
+    """Close one previously opened SAP GUI scripting session."""
+    return call_sap_gui_session_close(guiSessionId)
+
+
+@mcp.tool()
+def sap_gui_session_screenshot(
+    guiSessionId: str = Field(..., description="Internal SAP GUI scripting session identifier returned by sap_gui_session_open."),
+    filePath: str = Field(..., description="Absolute local file path where the screenshot of the current SAP GUI main window should be written.")
+) -> SapGuiSessionScreenshotResponse:
+    """Capture a screenshot of the current SAP GUI main window for one registered session and store it in a local file."""
+    return call_sap_gui_session_screenshot(guiSessionId, filePath)
+
+
+@mcp.tool()
+def sap_gui_session_inspect(
+    guiSessionId: str = Field(..., description="Internal SAP GUI scripting session identifier returned by sap_gui_session_open."),
+    maxDepth: int = Field(4, description="Maximum control-tree depth to inspect. Use lower values for smaller responses and higher values when more nested SAP GUI controls are needed.")
+) -> SapGuiSessionInspectResponse:
+    """Inspect one registered SAP GUI session and return a structured tree of SAP GUI controls, including ids, types, text, tooltips, and child controls."""
+    return call_sap_gui_session_inspect(guiSessionId, maxDepth)
+
+
+@mcp.tool()
+def sap_gui_session_inspect_to_file(
+    guiSessionId: str = Field(..., description="Internal SAP GUI scripting session identifier returned by sap_gui_session_open."),
+    filePath: str = Field(..., description="Absolute local file path where the SAP GUI inspection JSON should be written."),
+    maxDepth: int = Field(0, description="Maximum control-tree depth to inspect. Use 0 to export the complete tree without a practical depth limit.")
+) -> FileTransferResponse:
+    """Inspect one registered SAP GUI session and write the structured control tree to a local JSON file. Use this when the inspection result may be too large for a regular MCP response."""
+    return call_sap_gui_session_inspect_to_file(guiSessionId, filePath, maxDepth)
+
+
+@mcp.tool()
+def sap_gui_session_read_message(
+    guiSessionId: str = Field(..., description="Internal SAP GUI scripting session identifier returned by sap_gui_session_open.")
+) -> SapGuiSessionReadMessageResponse:
+    """Read the message currently visible in SAP GUI, prioritizing an active popup and otherwise falling back to the main status bar."""
+    return call_sap_gui_session_read_message(guiSessionId)
+
+
+@mcp.tool()
+def sap_gui_session_actions(
+    guiSessionId: str = Field(..., description="Internal SAP GUI scripting session identifier returned by sap_gui_session_open."),
+    request: SapGuiSessionActionsRequest = Field(..., description="Ordered SAP GUI actions to execute. Use a single action for simple interactions or multiple actions to fill a full screen before continuing. The tool waits only once at the end unless waitForCompletion is set to false.")
+) -> SapGuiSessionActionsResponse:
+    """Execute one or more SAP GUI actions against a registered session and, by default, wait only once at the end until SAP GUI has finished reacting."""
+    return call_sap_gui_session_actions(guiSessionId, request)
+
+
+@mcp.tool()
+def sap_gui_recording_start(
+    guiSessionId: str = Field(..., description="Internal SAP GUI scripting session identifier returned by sap_gui_session_open."),
+    folderPath: str = Field(..., description="Absolute local folder path where SAP GUI recording artifacts should be written. The tool will create the folder if it does not exist.")
+) -> SapGuiRecordingStartResponse:
+    """Start SAP GUI native recording for one registered session and direct the recording output to a local folder. The folder will contain `recording.vbs`, `metadata.json`, logs, and captured screenshots."""
+    return call_sap_gui_recording_start(guiSessionId, folderPath)
+
+
+@mcp.tool()
+def sap_gui_recording_stop(
+    guiSessionId: str = Field(..., description="Internal SAP GUI scripting session identifier returned by sap_gui_session_open.")
+) -> SapGuiRecordingStopResponse:
+    """Stop SAP GUI native recording for one registered session and return the paths of the generated recording artifacts."""
+    return call_sap_gui_recording_stop(guiSessionId)
+# endregion
 
 # region Info Repository
 @mcp.tool()
