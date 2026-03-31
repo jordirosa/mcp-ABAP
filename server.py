@@ -13,6 +13,7 @@ from ddic.tables.tables import *
 from generics import FileTransferOutput, FileTransferResponse
 from gui.gui import *
 from info_repository.info_repository import *
+from knowledge.knowledge import *
 from utils import *
 
 mcp = FastMCP(name="ABAP Tools - MCP Server", version="1.0.0")
@@ -126,6 +127,32 @@ def sap_gui_recording_stop(
 ) -> SapGuiRecordingStopResponse:
     """Stop SAP GUI native recording for one registered session and return the paths of the generated recording artifacts."""
     return call_sap_gui_recording_stop(guiSessionId)
+# endregion
+
+# region Knowledge
+@mcp.tool()
+def knowledge_upsert_document(
+    request: KnowledgeUpsertDocumentRequest = Field(..., description="Knowledge document to insert or update inside the local repository rooted at db/documents. The relative path must stay inside that fixed documents folder.")
+) -> KnowledgeUpsertDocumentResponse:
+    """Insert or update one knowledge document in db/documents and reindex it into the local Chroma collection."""
+    return call_knowledge_upsert_document(request)
+
+
+@mcp.tool()
+def knowledge_search(
+    query: str = Field(..., description="Semantic search query used to retrieve relevant chunks from the local knowledge base."),
+    limit: int = Field(5, description="Maximum number of matching chunks to return.")
+) -> KnowledgeSearchResponse:
+    """Search the local knowledge base semantically through the fixed Chroma collection stored under db/chroma."""
+    return call_knowledge_search(query, limit)
+
+
+@mcp.tool()
+def knowledge_get_document(
+    relativePath: str = Field(..., description="Relative path of the stored document inside db/documents. Do not include the fixed documents root.")
+) -> KnowledgeGetDocumentResponse:
+    """Load one previously stored knowledge document together with its metadata from db/documents."""
+    return call_knowledge_get_document(relativePath)
 # endregion
 
 # region Info Repository

@@ -4,3 +4,6 @@ fastmcp>=2.13.0
 xmltodict>=1.0.2
 python-dotenv>=1.0.0
 pywin32>=306; platform_system == "Windows"
+chromadb>=1.0.0
+sentence-transformers>=3.0.0
+einops>=0.8.0
