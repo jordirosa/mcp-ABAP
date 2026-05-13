@@ -97,7 +97,7 @@ def parse_activation_activate_response(response) -> ActivationActivateResponse:
 			messages=parsed_messages
 		)
 
-		return ActivationActivateResponse.parse_obj({
+		return ActivationActivateResponse.model_validate({
 			"result": output.activationExecuted and not has_errors,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -105,7 +105,7 @@ def parse_activation_activate_response(response) -> ActivationActivateResponse:
 			"data": output
 		})
 	except Exception as e:
-		return ActivationActivateResponse.parse_obj({
+		return ActivationActivateResponse.model_validate({
 			"result": False,
 			"httpCode": response.status_code if hasattr(response, "status_code") else 500,
 			"httpReason": response.reason if hasattr(response, "reason") else "Internal Server Error",
@@ -119,7 +119,7 @@ def call_activation_activate(systemId: str, request: ActivationActivateRequest) 
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return ActivationActivateResponse.parse_obj({
+			return ActivationActivateResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -128,7 +128,7 @@ def call_activation_activate(systemId: str, request: ActivationActivateRequest) 
 			})
 
 		if not request.objects:
-			return ActivationActivateResponse.parse_obj({
+			return ActivationActivateResponse.model_validate({
 				"result": False,
 				"httpCode": 400,
 				"httpReason": "Bad Request",
@@ -151,7 +151,7 @@ def call_activation_activate(systemId: str, request: ActivationActivateRequest) 
 		response = get_session(systemId).post(url, headers=headers, params=params, data=payload.encode("utf-8"))
 
 		if response.status_code != 200:
-			return ActivationActivateResponse.parse_obj({
+			return ActivationActivateResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -161,7 +161,7 @@ def call_activation_activate(systemId: str, request: ActivationActivateRequest) 
 
 		return parse_activation_activate_response(response)
 	except Exception as e:
-		return ActivationActivateResponse.parse_obj({
+		return ActivationActivateResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",

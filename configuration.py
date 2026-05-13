@@ -1,15 +1,19 @@
 import json
 import os
+from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key, unset_key
 from pydantic import BaseModel, Field
 import requests
 
 from generics import ApiResponse
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+ENV_FILE_PATH = PROJECT_ROOT / ".env"
+
 # Cargar variables de entorno desde archivo .env
-load_dotenv()
+load_dotenv(dotenv_path=ENV_FILE_PATH)
 
 
 class SapSystemConfig(BaseModel):
@@ -191,10 +195,86 @@ def call_sap_systems_list() -> SapSystemListResponse:
         totalCount=len(systems)
     )
 
-    return SapSystemListResponse.parse_obj({
+    return SapSystemListResponse.model_validate({
         "result": True,
         "httpCode": 200,
         "httpReason": "OK",
         "message": "Configured SAP systems listed successfully.",
         "data": output
     })
+
+
+def get_dashboard_config() -> dict[str, object]:
+    """Return the editable dashboard configuration based only on SAP_SYSTEMS_JSON and SAP_GUI_EXECUTABLE_PATH."""
+    raw_json = os.getenv("SAP_SYSTEMS_JSON", "").strip()
+    systems: list[dict[str, object]] = []
+    if raw_json:
+        parsed = json.loads(raw_json)
+        if not isinstance(parsed, list):
+            raise ValueError("SAP_SYSTEMS_JSON must contain a JSON array.")
+        systems = parsed
+
+    return {
+        "sapGuiExecutablePath": str(os.getenv("SAP_GUI_EXECUTABLE_PATH", "") or ""),
+        "systems": systems,
+    }
+
+
+def reload_runtime_configuration() -> None:
+    """Reload the in-memory SAP configuration after the .env file has changed."""
+    global SYSTEM_CONFIGS
+    load_dotenv(dotenv_path=ENV_FILE_PATH, override=True)
+    SYSTEM_CONFIGS = _load_system_configs()
+
+
+def update_dashboard_config(systems: list[dict[str, object]], sap_gui_executable_path: str) -> None:
+    """Persist the dashboard-managed SAP configuration back into the .env file and reload runtime state."""
+    if not isinstance(systems, list):
+        raise ValueError("systems must be a list.")
+
+    normalized_systems: list[dict[str, object]] = []
+    for raw_system in systems:
+        if not isinstance(raw_system, dict):
+            raise ValueError("Each SAP system entry must be a JSON object.")
+
+        normalized_system = dict(raw_system)
+        if normalized_system.get("id") is not None:
+            normalized_system["id"] = str(normalized_system["id"]).upper()
+        normalized_systems.append(normalized_system)
+
+    # Validate by temporarily building the configuration objects.
+    raw_json = json.dumps(normalized_systems, ensure_ascii=False)
+    previous_json = os.getenv("SAP_SYSTEMS_JSON")
+    previous_executable = os.getenv("SAP_GUI_EXECUTABLE_PATH")
+    os.environ["SAP_SYSTEMS_JSON"] = raw_json
+    if str(sap_gui_executable_path or "").strip():
+        os.environ["SAP_GUI_EXECUTABLE_PATH"] = str(sap_gui_executable_path).strip()
+    else:
+        os.environ.pop("SAP_GUI_EXECUTABLE_PATH", None)
+
+    try:
+        _load_system_configs()
+    except Exception:
+        if previous_json is None:
+            os.environ.pop("SAP_SYSTEMS_JSON", None)
+        else:
+            os.environ["SAP_SYSTEMS_JSON"] = previous_json
+        if previous_executable is None:
+            os.environ.pop("SAP_GUI_EXECUTABLE_PATH", None)
+        else:
+            os.environ["SAP_GUI_EXECUTABLE_PATH"] = previous_executable
+        raise
+
+    ENV_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    set_key(str(ENV_FILE_PATH), "SAP_SYSTEMS_JSON", raw_json, quote_mode="always")
+    if str(sap_gui_executable_path or "").strip():
+        set_key(
+            str(ENV_FILE_PATH),
+            "SAP_GUI_EXECUTABLE_PATH",
+            str(sap_gui_executable_path).strip(),
+            quote_mode="auto",
+        )
+    else:
+        unset_key(str(ENV_FILE_PATH), "SAP_GUI_EXECUTABLE_PATH")
+
+    reload_runtime_configuration()

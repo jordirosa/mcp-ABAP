@@ -76,6 +76,15 @@ class KnowledgeGetDocumentResponse(ApiResponse[KnowledgeGetDocumentOutput]):
     """Response model for loading one stored knowledge document."""
 
 
+class KnowledgeWarmupOutput(BaseModel):
+    """Diagnostic information returned after warming the local knowledge runtime."""
+
+    collectionName: str = Field(..., description="Fixed Chroma collection name used by the knowledge layer.")
+    chromaPath: str = Field(..., description="Absolute local path of the persistent Chroma directory.")
+    documentsPath: str = Field(..., description="Absolute local path of the knowledge documents directory.")
+    embeddingModel: str = Field(..., description="Embedding model loaded during warmup.")
+
+
 _EMBEDDER = None
 _CHROMA_CLIENT = None
 _CHROMADB_MODULE = None
@@ -253,6 +262,18 @@ def _get_collection():
     return collection
 
 
+def warm_knowledge_runtime() -> KnowledgeWarmupOutput:
+    """Warm the local Chroma collection and the embedding model for HTTP startup."""
+    _get_collection()
+    _get_embedder()
+    return KnowledgeWarmupOutput(
+        collectionName=_collection_name(),
+        chromaPath=str(_chroma_root()),
+        documentsPath=str(_documents_root()),
+        embeddingModel=_embedding_model_name(),
+    )
+
+
 def _document_embedding_texts(chunks: list[str]) -> list[str]:
     """Prepare document chunks for the configured embedding model."""
     model_name = _embedding_model_name().lower()
@@ -333,7 +354,7 @@ def call_knowledge_upsert_document(request: KnowledgeUpsertDocumentRequest) -> K
             request.content,
         )
 
-        return KnowledgeUpsertDocumentResponse.parse_obj({
+        return KnowledgeUpsertDocumentResponse.model_validate({
             "result": True,
             "httpCode": 200,
             "httpReason": "OK",
@@ -349,7 +370,7 @@ def call_knowledge_upsert_document(request: KnowledgeUpsertDocumentRequest) -> K
             ),
         })
     except ValueError as exc:
-        return KnowledgeUpsertDocumentResponse.parse_obj({
+        return KnowledgeUpsertDocumentResponse.model_validate({
             "result": False,
             "httpCode": 400,
             "httpReason": "Bad Request",
@@ -357,7 +378,7 @@ def call_knowledge_upsert_document(request: KnowledgeUpsertDocumentRequest) -> K
             "data": None,
         })
     except Exception as exc:
-        return KnowledgeUpsertDocumentResponse.parse_obj({
+        return KnowledgeUpsertDocumentResponse.model_validate({
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",
@@ -404,7 +425,7 @@ def call_knowledge_search(query: str, limit: int = 5) -> KnowledgeSearchResponse
                 metadata=free_metadata,
             ))
 
-        return KnowledgeSearchResponse.parse_obj({
+        return KnowledgeSearchResponse.model_validate({
             "result": True,
             "httpCode": 200,
             "httpReason": "OK",
@@ -418,7 +439,7 @@ def call_knowledge_search(query: str, limit: int = 5) -> KnowledgeSearchResponse
             ),
         })
     except ValueError as exc:
-        return KnowledgeSearchResponse.parse_obj({
+        return KnowledgeSearchResponse.model_validate({
             "result": False,
             "httpCode": 400,
             "httpReason": "Bad Request",
@@ -426,7 +447,7 @@ def call_knowledge_search(query: str, limit: int = 5) -> KnowledgeSearchResponse
             "data": None,
         })
     except Exception as exc:
-        return KnowledgeSearchResponse.parse_obj({
+        return KnowledgeSearchResponse.model_validate({
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",
@@ -445,7 +466,7 @@ def call_knowledge_get_document(relativePath: str) -> KnowledgeGetDocumentRespon
         metadata_payload = _load_document_metadata(document_path)
         metadata_path = _metadata_path_for_document(document_path)
 
-        return KnowledgeGetDocumentResponse.parse_obj({
+        return KnowledgeGetDocumentResponse.model_validate({
             "result": True,
             "httpCode": 200,
             "httpReason": "OK",
@@ -464,7 +485,7 @@ def call_knowledge_get_document(relativePath: str) -> KnowledgeGetDocumentRespon
             ),
         })
     except FileNotFoundError as exc:
-        return KnowledgeGetDocumentResponse.parse_obj({
+        return KnowledgeGetDocumentResponse.model_validate({
             "result": False,
             "httpCode": 404,
             "httpReason": "Not Found",
@@ -472,7 +493,7 @@ def call_knowledge_get_document(relativePath: str) -> KnowledgeGetDocumentRespon
             "data": None,
         })
     except ValueError as exc:
-        return KnowledgeGetDocumentResponse.parse_obj({
+        return KnowledgeGetDocumentResponse.model_validate({
             "result": False,
             "httpCode": 400,
             "httpReason": "Bad Request",
@@ -480,7 +501,7 @@ def call_knowledge_get_document(relativePath: str) -> KnowledgeGetDocumentRespon
             "data": None,
         })
     except Exception as exc:
-        return KnowledgeGetDocumentResponse.parse_obj({
+        return KnowledgeGetDocumentResponse.model_validate({
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",

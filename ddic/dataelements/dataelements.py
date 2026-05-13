@@ -251,7 +251,7 @@ def parse_ddic_dataelement_create_response(response) -> DdicDataElementCreateRes
 	"""Parse XML response from data element creation API."""
 	try:
 		output = _parse_ddic_dataelement_response(response)
-		return DdicDataElementCreateResponse.parse_obj({
+		return DdicDataElementCreateResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -259,7 +259,7 @@ def parse_ddic_dataelement_create_response(response) -> DdicDataElementCreateRes
 			"data": output
 		})
 	except Exception as e:
-		return DdicDataElementCreateResponse.parse_obj({
+		return DdicDataElementCreateResponse.model_validate({
 			"result": False,
 			"httpCode": response.status_code if hasattr(response, "status_code") else 500,
 			"httpReason": response.reason if hasattr(response, "reason") else "Internal Server Error",
@@ -272,7 +272,7 @@ def parse_ddic_dataelement_read_response(response) -> DdicDataElementReadRespons
 	"""Parse XML response from data element read API."""
 	try:
 		output = _parse_ddic_dataelement_response(response)
-		return DdicDataElementReadResponse.parse_obj({
+		return DdicDataElementReadResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -280,7 +280,7 @@ def parse_ddic_dataelement_read_response(response) -> DdicDataElementReadRespons
 			"data": output
 		})
 	except Exception as e:
-		return DdicDataElementReadResponse.parse_obj({
+		return DdicDataElementReadResponse.model_validate({
 			"result": False,
 			"httpCode": response.status_code if hasattr(response, "status_code") else 500,
 			"httpReason": response.reason if hasattr(response, "reason") else "Internal Server Error",
@@ -306,7 +306,7 @@ def parse_ddic_dataelement_lock_response(response) -> DdicDataElementLockRespons
 			scopeMessages=data_root.get("SCOPE_MESSAGES", "") or ""
 		)
 
-		return DdicDataElementLockResponse.parse_obj({
+		return DdicDataElementLockResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -314,7 +314,7 @@ def parse_ddic_dataelement_lock_response(response) -> DdicDataElementLockRespons
 			"data": output
 		})
 	except Exception as e:
-		return DdicDataElementLockResponse.parse_obj({
+		return DdicDataElementLockResponse.model_validate({
 			"result": False,
 			"httpCode": response.status_code if hasattr(response, "status_code") else 500,
 			"httpReason": response.reason if hasattr(response, "reason") else "Internal Server Error",
@@ -336,7 +336,7 @@ def call_ddic_dataelement_create(
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicDataElementCreateResponse.parse_obj({
+			return DdicDataElementCreateResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -365,7 +365,7 @@ def call_ddic_dataelement_create(
 
 		response = get_session(systemId).post(url, headers=headers, params=params, data=payload.encode("utf-8"))
 		if response.status_code != 201:
-			return DdicDataElementCreateResponse.parse_obj({
+			return DdicDataElementCreateResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -375,7 +375,7 @@ def call_ddic_dataelement_create(
 
 		return parse_ddic_dataelement_create_response(response)
 	except Exception as e:
-		return DdicDataElementCreateResponse.parse_obj({
+		return DdicDataElementCreateResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -389,7 +389,7 @@ def call_ddic_dataelement_read(systemId: str, name: str) -> DdicDataElementReadR
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicDataElementReadResponse.parse_obj({
+			return DdicDataElementReadResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -399,7 +399,7 @@ def call_ddic_dataelement_read(systemId: str, name: str) -> DdicDataElementReadR
 
 		response = _get_ddic_dataelement_xml(systemId, name)
 		if response.status_code != 200:
-			return DdicDataElementReadResponse.parse_obj({
+			return DdicDataElementReadResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -409,7 +409,7 @@ def call_ddic_dataelement_read(systemId: str, name: str) -> DdicDataElementReadR
 
 		return parse_ddic_dataelement_read_response(response)
 	except Exception as e:
-		return DdicDataElementReadResponse.parse_obj({
+		return DdicDataElementReadResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -442,7 +442,7 @@ def call_ddic_dataelement_update(
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicDataElementUpdateResponse.parse_obj({
+			return DdicDataElementUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -452,7 +452,7 @@ def call_ddic_dataelement_update(
 
 		current_response = _get_ddic_dataelement_xml(systemId, name)
 		if current_response.status_code != 200:
-			return DdicDataElementUpdateResponse.parse_obj({
+			return DdicDataElementUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": current_response.status_code,
 				"httpReason": current_response.reason,
@@ -473,7 +473,7 @@ def call_ddic_dataelement_update(
 
 		response = get_session(systemId).put(url, headers=headers, params=params, data=payload.encode("utf-8"))
 		if response.status_code != 200:
-			return DdicDataElementUpdateResponse.parse_obj({
+			return DdicDataElementUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -482,7 +482,7 @@ def call_ddic_dataelement_update(
 			})
 
 		output = _parse_ddic_dataelement_response(response)
-		return DdicDataElementUpdateResponse.parse_obj({
+		return DdicDataElementUpdateResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -490,7 +490,7 @@ def call_ddic_dataelement_update(
 			"data": output
 		})
 	except Exception as e:
-		return DdicDataElementUpdateResponse.parse_obj({
+		return DdicDataElementUpdateResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -510,7 +510,7 @@ def call_ddic_dataelement_update_raw(
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicDataElementUpdateResponse.parse_obj({
+			return DdicDataElementUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -530,7 +530,7 @@ def call_ddic_dataelement_update_raw(
 
 		response = get_session(systemId).put(url, headers=headers, params=params, data=rawXml.encode("utf-8"))
 		if response.status_code != 200:
-			return DdicDataElementUpdateResponse.parse_obj({
+			return DdicDataElementUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -539,7 +539,7 @@ def call_ddic_dataelement_update_raw(
 			})
 
 		output = _parse_ddic_dataelement_response(response)
-		return DdicDataElementUpdateResponse.parse_obj({
+		return DdicDataElementUpdateResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -547,7 +547,7 @@ def call_ddic_dataelement_update_raw(
 			"data": output
 		})
 	except Exception as e:
-		return DdicDataElementUpdateResponse.parse_obj({
+		return DdicDataElementUpdateResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -561,7 +561,7 @@ def call_ddic_dataelement_lock(systemId: str, name: str, accessMode: str = "MODI
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicDataElementLockResponse.parse_obj({
+			return DdicDataElementLockResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -581,7 +581,7 @@ def call_ddic_dataelement_lock(systemId: str, name: str, accessMode: str = "MODI
 
 		response = get_session(systemId).post(url, headers=headers, params=params)
 		if response.status_code != 200:
-			return DdicDataElementLockResponse.parse_obj({
+			return DdicDataElementLockResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -591,7 +591,7 @@ def call_ddic_dataelement_lock(systemId: str, name: str, accessMode: str = "MODI
 
 		return parse_ddic_dataelement_lock_response(response)
 	except Exception as e:
-		return DdicDataElementLockResponse.parse_obj({
+		return DdicDataElementLockResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -605,7 +605,7 @@ def call_ddic_dataelement_unlock(systemId: str, name: str, lockHandle: str) -> D
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicDataElementUnlockResponse.parse_obj({
+			return DdicDataElementUnlockResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -620,7 +620,7 @@ def call_ddic_dataelement_unlock(systemId: str, name: str, lockHandle: str) -> D
 
 		response = get_session(systemId).post(url, headers=headers, params=params)
 		if response.status_code != 200:
-			return DdicDataElementUnlockResponse.parse_obj({
+			return DdicDataElementUnlockResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -628,7 +628,7 @@ def call_ddic_dataelement_unlock(systemId: str, name: str, lockHandle: str) -> D
 				"data": None
 			})
 
-		return DdicDataElementUnlockResponse.parse_obj({
+		return DdicDataElementUnlockResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -636,7 +636,7 @@ def call_ddic_dataelement_unlock(systemId: str, name: str, lockHandle: str) -> D
 			"data": None
 		})
 	except Exception as e:
-		return DdicDataElementUnlockResponse.parse_obj({
+		return DdicDataElementUnlockResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",

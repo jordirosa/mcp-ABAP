@@ -1,14 +1,18 @@
 import json
 import os
+import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import traceback
 import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from shutil import which
+from urllib.parse import unquote, urlparse
 
 from pydantic import BaseModel, Field
 
@@ -115,6 +119,8 @@ class SapGuiSessionScreenshotOutput(BaseModel):
     imageFormat: str = Field(..., description="Image format written by SAP GUI, typically bmp.")
     sizeBytes: int = Field(..., description="Number of bytes written to the screenshot file.")
     windowTitle: str = Field(..., description="Title of the captured main window when available.")
+    windowIds: list[str] = Field(default_factory=list, description="SAP GUI window ids included in the screenshot.")
+    windowCount: int = Field(1, description="Number of SAP GUI windows included in the screenshot.")
 
 
 class SapGuiSessionScreenshotResponse(ApiResponse[SapGuiSessionScreenshotOutput]):
@@ -254,11 +260,132 @@ class SapGuiRecordingStopResponse(ApiResponse[SapGuiRecordingStopOutput]):
     """Response model for stopping SAP GUI native recording."""
 
 
-SapGuiControlInfo.update_forward_refs()
+SapGuiControlInfo.model_rebuild()
 
 
 GUI_SESSIONS: dict[str, SapGuiSessionContext] = {}
 GUI_RECORDINGS: dict[str, SapGuiRecordingContext] = {}
+
+
+def _file_uri_to_path(uri: str) -> Path | None:
+    """Convert one file:// URI into a local Windows path when possible."""
+    cleaned = str(uri or "").strip()
+    if not cleaned:
+        return None
+    parsed = urlparse(cleaned)
+    if parsed.scheme and parsed.scheme.lower() != "file":
+        return None
+
+    if parsed.scheme.lower() == "file":
+        path_value = unquote(parsed.path or "")
+        if path_value.startswith("/") and len(path_value) >= 3 and path_value[2] == ":":
+            path_value = path_value[1:]
+        return Path(path_value)
+
+    return Path(cleaned)
+
+
+def _resolve_sap_ui_landscape_paths() -> list[Path]:
+    """Return the SAP UI Landscape XML files that may contain SAP Logon entries."""
+    candidates: list[Path] = []
+    configured_xml = str(os.getenv("SAPLOGON_LSXML_FILE", "") or "").strip()
+    if configured_xml:
+        configured_path = Path(configured_xml)
+        if configured_path.exists():
+            candidates.append(configured_path)
+
+    appdata = Path(os.getenv("APPDATA", "") or "")
+    if appdata:
+        candidates.extend([
+            appdata / "SAP" / "Common" / "SAPUILandscape.xml",
+            appdata / "SAP" / "Common" / "SAPUILandscapeGlobal.xml",
+        ])
+
+    unique_paths: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            resolved = candidate
+        normalized = str(resolved).lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if resolved.exists():
+            unique_paths.append(resolved)
+    return unique_paths
+
+
+def _parse_sap_ui_landscape_services(path: Path, visited: set[str] | None = None) -> list[dict[str, str]]:
+    """Parse one SAP UI Landscape XML file and return the available SAPGUI services."""
+    if visited is None:
+        visited = set()
+
+    try:
+        resolved = path.resolve()
+    except Exception:
+        resolved = path
+
+    normalized = str(resolved).lower()
+    if normalized in visited or not resolved.exists():
+        return []
+    visited.add(normalized)
+
+    root = ET.fromstring(resolved.read_text(encoding="utf-8"))
+    entries: list[dict[str, str]] = []
+    services_parent = root.find("Services")
+    if services_parent is not None:
+        for service in services_parent.findall("Service"):
+            if str(service.attrib.get("type", "")).upper() != "SAPGUI":
+                continue
+
+            server_value = str(service.attrib.get("server", "") or "")
+            host_value = server_value
+            port_value = ""
+            if ":" in server_value:
+                host_value, port_value = server_value.rsplit(":", 1)
+
+            entries.append({
+                "uuid": str(service.attrib.get("uuid", "") or ""),
+                "name": str(service.attrib.get("name", "") or ""),
+                "systemId": str(service.attrib.get("systemid", "") or ""),
+                "server": server_value,
+                "host": host_value,
+                "port": port_value,
+                "sourceFile": str(resolved),
+            })
+
+    includes_parent = root.find("Includes")
+    if includes_parent is not None:
+        for include in includes_parent.findall("Include"):
+            include_path = _file_uri_to_path(str(include.attrib.get("url", "") or ""))
+            if include_path is None:
+                continue
+            entries.extend(_parse_sap_ui_landscape_services(include_path, visited))
+
+    return entries
+
+
+def list_sap_logon_entries() -> dict[str, object]:
+    """List SAP Logon entries discovered from the local SAP UI Landscape XML files."""
+    paths = _resolve_sap_ui_landscape_paths()
+    entries: list[dict[str, str]] = []
+    seen_by_name: set[str] = set()
+    for path in paths:
+        for entry in _parse_sap_ui_landscape_services(path):
+            name_key = str(entry.get("name", "")).strip().lower()
+            if not name_key or name_key in seen_by_name:
+                continue
+            seen_by_name.add(name_key)
+            entries.append(entry)
+
+    entries.sort(key=lambda item: str(item.get("name", "")).lower())
+    return {
+        "landscapeFiles": [str(path) for path in paths],
+        "entries": entries,
+        "totalCount": len(entries),
+    }
 
 
 def _get_sap_gui_executable_path() -> str:
@@ -463,6 +590,55 @@ def _perform_logon_if_needed(session, *, client: str, user: str, password: str, 
         session.findById("wnd[0]").sendVKey(0)
 
 
+def _is_logon_screen_visible(session) -> bool:
+    """Return whether the current SAP GUI screen still looks like the classic logon form."""
+    for field_id in (
+        "wnd[0]/usr/txtRSYST-MANDT",
+        "wnd[0]/usr/txtRSYST-BNAME",
+        "wnd[0]/usr/pwdRSYST-BCODE",
+    ):
+        try:
+            session.findById(field_id)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _ensure_logged_on_before_navigation(session, *, client: str, user: str, password: str) -> None:
+    """Validate that the temporary session is beyond the SAP logon screen before sending commands."""
+    info = getattr(session, "Info", None)
+    program = _safe_getattr(info, "Program")
+    screen_number = _safe_getattr(info, "ScreenNumber")
+    message = _read_visible_message(session)
+
+    if _is_logon_screen_visible(session) or (program == "SAPMSYST" and screen_number == "20"):
+        if message.text:
+            raise RuntimeError(
+                f"The SAP GUI session is still on the logon screen: {message.text}. "
+                "Review client, user and password before trying the automatic import again."
+            )
+
+        missing_fields: list[str] = []
+        if not (client or "").strip():
+            missing_fields.append("cliente")
+        if not (user or "").strip():
+            missing_fields.append("usuario")
+        if not (password or ""):
+            missing_fields.append("password")
+
+        if missing_fields:
+            raise RuntimeError(
+                "The selected SAP Logon entry requires an interactive logon before SMICM can be opened. "
+                f"Fill these fields first: {', '.join(missing_fields)}."
+            )
+
+        raise RuntimeError(
+            "The selected SAP Logon entry stayed on the SAP logon screen and could not continue automatically. "
+            "Check the credentials or use the manual help."
+        )
+
+
 def _collect_radiobuttons(container) -> list[object]:
     """Collect radio buttons recursively from one SAP GUI container."""
     radio_buttons: list[object] = []
@@ -578,6 +754,343 @@ def _read_connection_name(connection) -> str:
         or _safe_getattr(connection, "ConnectionString")
         or "Unknown Connection"
     )
+
+
+def _close_native_session(session) -> None:
+    """Close one live SAP GUI session that is not registered in the MCP server."""
+    try:
+        session.findById("wnd[0]/tbar[0]/okcd").text = "/nex"
+        session.findById("wnd[0]").sendVKey(0)
+        return
+    except Exception:
+        pass
+
+    try:
+        session.findById("wnd[0]").close()
+    except Exception:
+        pass
+
+
+def _open_temporary_connection_by_name(connection_name: str):
+    """Open one temporary SAP GUI session directly from an SAP Logon connection name."""
+    _require_scripting_dependencies()
+    _ensure_sap_logon_running()
+    application = _get_scripting_application_with_retry()
+    existing_native_session_ids = {
+        item["nativeSessionId"]
+        for item in _iter_visible_sessions(application)
+        if item["nativeSessionId"]
+    }
+    connection = None
+    last_error: Exception | None = None
+    for _ in range(3):
+        try:
+            connection = application.OpenConnection(connection_name, True)
+            break
+        except Exception as exc:
+            last_error = exc
+            time.sleep(0.75)
+
+    if connection is None:
+        raise RuntimeError(
+            f"The SAP Logon entry '{connection_name}' could not be opened through SAP GUI scripting."
+        ) from last_error
+
+    session = _get_connection_session(connection, existing_native_session_ids=existing_native_session_ids)
+    _handle_multiple_logon_popup(session)
+    time.sleep(0.5)
+    visible_session = _find_visible_session_by_native_id(application, _safe_getattr(session, "Id"))
+    if visible_session is not None:
+        session = visible_session["session"]
+    return application, connection, session
+
+
+def _find_child_menu_by_text(container, expected_text: str):
+    """Find the first GUI menu child whose visible text matches one expected label."""
+    expected_normalized = expected_text.strip().lower()
+    try:
+        child_count = int(container.Children.Count)
+    except Exception:
+        return None
+
+    for child_index in range(child_count):
+        try:
+            child = container.Children(child_index)
+        except Exception:
+            continue
+
+        if _safe_getattr(child, "Text").strip().lower() == expected_normalized:
+            return child
+    return None
+
+
+def _select_window_menu_path(session, labels: list[str]) -> None:
+    """Select one menu path in the main window using visible menu texts."""
+    if not labels:
+        raise ValueError("The menu path must include at least one visible label.")
+
+    try:
+        current = session.findById("wnd[0]/mbar")
+    except Exception as exc:
+        raise RuntimeError("The current SAP GUI screen does not expose a menu bar.") from exc
+
+    for label in labels:
+        current = _find_child_menu_by_text(current, label)
+        if current is None:
+            joined = " -> ".join(labels)
+            raise RuntimeError(f"The SAP GUI menu path '{joined}' is not available on the current screen.")
+
+    current.select()
+
+
+def _iter_controls_recursive(control):
+    """Yield one SAP GUI control tree depth-first."""
+    yield control
+    try:
+        child_count = int(control.Children.Count)
+    except Exception:
+        return
+
+    for child_index in range(child_count):
+        try:
+            child = control.Children(child_index)
+        except Exception:
+            continue
+        yield from _iter_controls_recursive(child)
+
+
+def _read_service_display_endpoint(session) -> tuple[str, str]:
+    """Read the best HTTP(S) endpoint from the SMICM service display without assuming a fixed row."""
+    try:
+        user_area = session.findById("wnd[0]/usr")
+    except Exception as exc:
+        raise RuntimeError("The SMICM service list is not available in the current SAP GUI window.") from exc
+
+    rows: dict[int, list[tuple[int, str]]] = {}
+    label_pattern = re.compile(r"lbl\[(\d+),(\d+)\]$", re.IGNORECASE)
+
+    for control in _iter_controls_recursive(user_area):
+        control_id = _safe_getattr(control, "Id")
+        match = label_pattern.search(control_id)
+        if match is None:
+            continue
+
+        text = _safe_getattr(control, "Text").strip()
+        if not text:
+            continue
+
+        column = int(match.group(1))
+        row = int(match.group(2))
+        rows.setdefault(row, []).append((column, text))
+
+    for preferred_protocol in ("HTTPS", "HTTP"):
+        for row_index in sorted(rows):
+            cells = sorted(rows[row_index], key=lambda item: item[0])
+            matching_columns = [column for column, text in cells if text.strip().upper() == preferred_protocol]
+            if not matching_columns:
+                continue
+
+            protocol_column = matching_columns[0]
+            numeric_candidates = [
+                text.strip()
+                for column, text in cells
+                if column > protocol_column and re.fullmatch(r"\d+", text.strip())
+            ]
+            if numeric_candidates:
+                return preferred_protocol.lower(), numeric_candidates[0]
+
+    raise RuntimeError("Neither HTTPS nor HTTP service rows could be found in the SMICM service display.")
+
+
+def _read_default_client_hint(session) -> str:
+    """Read the default or current SAP client from the temporary SAP GUI session when available."""
+    info = getattr(session, "Info", None)
+    return (
+        _safe_find_text(session, "wnd[0]/usr/txtRSYST-MANDT", "")
+        or _safe_getattr(info, "Client")
+        or ""
+    )
+
+
+def _discover_https_endpoint_single_connection(
+    connection_name: str,
+    host: str,
+    *,
+    client: str = "",
+    user: str = "",
+    password: str = "",
+    language: str = "EN",
+) -> dict[str, str]:
+    """Open one specific SAP Logon connection, discover the HTTPS port, and close the session."""
+    session = None
+    try:
+        if not (connection_name or "").strip():
+            raise ValueError("The SAP Logon entry name is required.")
+        if not (host or "").strip():
+            raise ValueError("The SAP Logon entry does not define a host value.")
+
+        _require_scripting_dependencies()
+        pythoncom.CoInitialize()
+        _, _, session = _open_temporary_connection_by_name(connection_name.strip())
+        default_client = _read_default_client_hint(session)
+        _perform_logon_if_needed(
+            session,
+            client=(client or "").strip(),
+            user=(user or "").strip(),
+            password=password or "",
+            language=(language or "EN").strip() or "EN",
+        )
+        _handle_multiple_logon_popup(session)
+        _wait_for_session_stable(session, timeout_seconds=30.0)
+        _ensure_logged_on_before_navigation(
+            session,
+            client=(client or "").strip(),
+            user=(user or "").strip(),
+            password=password or "",
+        )
+
+        try:
+            command_field = session.findById("wnd[0]/tbar[0]/okcd")
+        except Exception as exc:
+            raise RuntimeError(
+                "The temporary SAP GUI session did not reach a normal SAP screen. Check that SAP GUI Scripting is enabled and, if this SAP Logon entry does not log on automatically, fill client, user and password first or use the manual help."
+            ) from exc
+
+        command_field.text = "/nSMICM"
+        session.findById("wnd[0]").sendVKey(0)
+        _wait_for_session_stable(session, timeout_seconds=30.0)
+
+        _select_window_menu_path(session, ["Goto", "Services"])
+        _wait_for_session_stable(session, timeout_seconds=30.0)
+
+        protocol, service_port = _read_service_display_endpoint(session)
+        if not default_client:
+            default_client = _read_default_client_hint(session)
+        return {
+            "connectionName": connection_name.strip(),
+            "host": host.strip(),
+            "protocol": protocol,
+            "port": service_port,
+            "server": f"{protocol}://{host.strip()}:{service_port}",
+            "defaultClient": default_client,
+        }
+    finally:
+        if session is not None:
+            _close_native_session(session)
+            time.sleep(0.8)
+        if pythoncom is not None:
+            pythoncom.CoUninitialize()
+
+
+def discover_sap_logon_https_endpoint(
+    connection_name: str,
+    host: str,
+    *,
+    system_id: str = "",
+    client: str = "",
+    user: str = "",
+    password: str = "",
+    language: str = "EN",
+) -> dict[str, str]:
+    """Discover the HTTPS port using the selected SAP Logon entry and compatible fallbacks."""
+    requested_name = (connection_name or "").strip()
+    if not requested_name:
+        raise ValueError("The SAP Logon entry name is required.")
+
+    candidate_names: list[str] = [requested_name]
+    normalized_requested = requested_name.lower()
+    normalized_system_id = (system_id or "").strip().upper()
+    if normalized_system_id:
+        for entry in list_sap_logon_entries().get("entries", []):
+            entry_name = str(entry.get("name", "") or "").strip()
+            entry_system_id = str(entry.get("systemId", "") or "").strip().upper()
+            if not entry_name or entry_name.lower() == normalized_requested:
+                continue
+            if entry_system_id != normalized_system_id:
+                continue
+            candidate_names.append(entry_name)
+
+    errors: list[str] = []
+    for candidate_name in candidate_names:
+        try:
+            result = _discover_https_endpoint_single_connection(
+                candidate_name,
+                host,
+                client=client,
+                user=user,
+                password=password,
+                language=language,
+            )
+            if candidate_name != requested_name:
+                result["requestedConnectionName"] = requested_name
+            return result
+        except Exception as exc:
+            errors.append(f"{candidate_name}: {str(exc)}")
+
+    raise RuntimeError(
+        "No SAP Logon entry could be used to discover the HTTPS port automatically. "
+        + " | ".join(errors)
+    )
+
+
+def discover_sap_logon_https_endpoint_subprocess(
+    connection_name: str,
+    host: str,
+    *,
+    system_id: str = "",
+    client: str = "",
+    user: str = "",
+    password: str = "",
+    language: str = "EN",
+    timeout_seconds: int = 90,
+) -> dict[str, str]:
+    """Run HTTPS endpoint discovery in a dedicated Python process to avoid blocking the HTTP server."""
+    payload = {
+        "connection_name": connection_name,
+        "host": host,
+        "system_id": system_id,
+        "client": client,
+        "user": user,
+        "password": password,
+        "language": language,
+    }
+    helper_code = """
+import json
+import sys
+from gui.gui import discover_sap_logon_https_endpoint
+
+payload = json.load(sys.stdin)
+result = discover_sap_logon_https_endpoint(
+    payload.get('connection_name', ''),
+    payload.get('host', ''),
+    system_id=payload.get('system_id', ''),
+    client=payload.get('client', ''),
+    user=payload.get('user', ''),
+    password=payload.get('password', ''),
+    language=payload.get('language', 'EN'),
+)
+sys.stdout.write(json.dumps(result))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", helper_code],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parent.parent),
+        timeout=timeout_seconds,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        stdout = (result.stdout or "").strip()
+        detail = stderr or stdout or f"Helper process failed with exit code {result.returncode}."
+        raise RuntimeError(detail)
+
+    try:
+        return json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("The HTTPS discovery helper returned an invalid response.") from exc
 
 
 def _read_window_title(session) -> str:
@@ -1292,6 +1805,35 @@ def _compose_capture_group_to_file(group_events: list[dict], output_path: Path) 
             manifest_path.unlink()
 
 
+def _list_session_windows(session) -> list:
+    """Return SAP GUI wnd[*] windows currently available in the session."""
+    windows = []
+    index = 0
+    while True:
+        try:
+            windows.append(session.findById(f"wnd[{index}]"))
+            index += 1
+        except Exception:
+            break
+    return windows
+
+
+def _window_capture_entry(window, absolute_file_path: str) -> dict:
+    """Build one composition entry from a SAP GUI wnd object and screenshot path."""
+    left = int(_safe_getattr(window, "Left", 0) or 0)
+    top = int(_safe_getattr(window, "Top", 0) or 0)
+    width = int(_safe_getattr(window, "Width", 0) or 0)
+    height = int(_safe_getattr(window, "Height", 0) or 0)
+    return {
+        "absoluteFilePath": absolute_file_path,
+        "left": left,
+        "top": top,
+        "width": width,
+        "height": height,
+        "windowId": str(_safe_getattr(window, "Id", "") or ""),
+    }
+
+
 def _build_recording_artifacts(recording_context: SapGuiRecordingContext) -> tuple[list[dict], list[dict], list[dict]]:
     """Build final captures, screens, and transitions from the temporary event stream."""
     _, metadata_file_path, screenshots_folder = _get_recording_output_paths(recording_context)
@@ -1467,7 +2009,7 @@ def call_sap_gui_session_open(systemId: str) -> SapGuiSessionOpenResponse:
             native_session_id=native_session_id,
         )
 
-        return SapGuiSessionOpenResponse.parse_obj({
+        return SapGuiSessionOpenResponse.model_validate({
             "result": True,
             "httpCode": 200,
             "httpReason": "OK",
@@ -1484,7 +2026,7 @@ def call_sap_gui_session_open(systemId: str) -> SapGuiSessionOpenResponse:
             ),
         })
     except KeyError as exc:
-        return SapGuiSessionOpenResponse.parse_obj({
+        return SapGuiSessionOpenResponse.model_validate({
             "result": False,
             "httpCode": 404,
             "httpReason": "Not Found",
@@ -1492,7 +2034,7 @@ def call_sap_gui_session_open(systemId: str) -> SapGuiSessionOpenResponse:
             "data": None,
         })
     except ValueError as exc:
-        return SapGuiSessionOpenResponse.parse_obj({
+        return SapGuiSessionOpenResponse.model_validate({
             "result": False,
             "httpCode": 400,
             "httpReason": "Bad Request",
@@ -1500,7 +2042,7 @@ def call_sap_gui_session_open(systemId: str) -> SapGuiSessionOpenResponse:
             "data": None,
         })
     except Exception as exc:
-        return SapGuiSessionOpenResponse.parse_obj({
+        return SapGuiSessionOpenResponse.model_validate({
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",
@@ -1523,7 +2065,7 @@ def call_sap_gui_session_close(guiSessionId: str) -> SapGuiSessionCloseResponse:
 
         if visible_session is None:
             GUI_SESSIONS.pop(guiSessionId, None)
-            return SapGuiSessionCloseResponse.parse_obj({
+            return SapGuiSessionCloseResponse.model_validate({
                 "result": True,
                 "httpCode": 200,
                 "httpReason": "OK",
@@ -1546,7 +2088,7 @@ def call_sap_gui_session_close(guiSessionId: str) -> SapGuiSessionCloseResponse:
 
         GUI_SESSIONS.pop(guiSessionId, None)
 
-        return SapGuiSessionCloseResponse.parse_obj({
+        return SapGuiSessionCloseResponse.model_validate({
             "result": True,
             "httpCode": 200,
             "httpReason": "OK",
@@ -1560,7 +2102,7 @@ def call_sap_gui_session_close(guiSessionId: str) -> SapGuiSessionCloseResponse:
             ),
         })
     except KeyError as exc:
-        return SapGuiSessionCloseResponse.parse_obj({
+        return SapGuiSessionCloseResponse.model_validate({
             "result": False,
             "httpCode": 404,
             "httpReason": "Not Found",
@@ -1568,7 +2110,7 @@ def call_sap_gui_session_close(guiSessionId: str) -> SapGuiSessionCloseResponse:
             "data": None,
         })
     except Exception as exc:
-        return SapGuiSessionCloseResponse.parse_obj({
+        return SapGuiSessionCloseResponse.model_validate({
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",
@@ -1596,7 +2138,7 @@ def call_sap_gui_sessions_list() -> SapGuiSessionListResponse:
         sessions=sessions,
         totalCount=len(sessions),
     )
-    return SapGuiSessionListResponse.parse_obj({
+    return SapGuiSessionListResponse.model_validate({
         "result": True,
         "httpCode": 200,
         "httpReason": "OK",
@@ -1605,8 +2147,13 @@ def call_sap_gui_sessions_list() -> SapGuiSessionListResponse:
     })
 
 
-def call_sap_gui_session_screenshot(guiSessionId: str, filePath: str) -> SapGuiSessionScreenshotResponse:
-    """Capture the current main window of one registered SAP GUI session to a local file."""
+def call_sap_gui_session_screenshot(
+    guiSessionId: str,
+    filePath: str,
+    windowId: str = "",
+    allWindows: bool = False,
+) -> SapGuiSessionScreenshotResponse:
+    """Capture one SAP GUI wnd or compose all visible wnd[*] windows into one local file."""
     try:
         _require_scripting_dependencies()
         target_path = ensure_absolute_file_path(filePath)
@@ -1615,13 +2162,44 @@ def call_sap_gui_session_screenshot(guiSessionId: str, filePath: str) -> SapGuiS
         pythoncom.CoInitialize()
         context, visible_session = _get_live_session_for_gui_session_id(guiSessionId)
         session = visible_session["session"]
-        window = session.findById("wnd[0]")
+        requested_window_id = str(windowId or "").strip()
 
-        # SAP GUI writes bitmap screenshots through HardCopy.
-        window.HardCopy(str(target_path), 2)
+        if allWindows and requested_window_id:
+            raise ValueError("Use either windowId or allWindows, not both.")
+
+        windows = _list_session_windows(session)
+        if not windows:
+            raise RuntimeError("No SAP GUI windows are currently available for screenshot capture.")
+
+        if requested_window_id:
+            selected_windows = [window for window in windows if str(_safe_getattr(window, "Id", "") or "") == requested_window_id]
+            if not selected_windows:
+                raise ValueError(f"SAP GUI window '{requested_window_id}' was not found in the current session.")
+        elif allWindows:
+            selected_windows = windows
+        else:
+            selected_windows = [session.findById("wnd[0]")]
+
+        if len(selected_windows) == 1:
+            selected_windows[0].HardCopy(str(target_path), 2)
+        else:
+            temp_folder = target_path.parent / f".sap_gui_capture_{uuid.uuid4().hex}"
+            temp_folder.mkdir(parents=True, exist_ok=True)
+            capture_entries: list[dict] = []
+            try:
+                for index, window in enumerate(selected_windows):
+                    temp_file = temp_folder / f"wnd_{index:02d}.bmp"
+                    window.HardCopy(str(temp_file), 2)
+                    capture_entries.append(_window_capture_entry(window, str(temp_file)))
+                if not _compose_capture_group_to_file(capture_entries, target_path):
+                    raise RuntimeError("Failed to compose the SAP GUI screenshot from multiple windows.")
+            finally:
+                shutil.rmtree(temp_folder, ignore_errors=True)
+
         size_bytes = target_path.stat().st_size
+        captured_window_ids = [str(_safe_getattr(window, "Id", "") or "") for window in selected_windows]
 
-        return SapGuiSessionScreenshotResponse.parse_obj({
+        return SapGuiSessionScreenshotResponse.model_validate({
             "result": True,
             "httpCode": 200,
             "httpReason": "OK",
@@ -1633,10 +2211,12 @@ def call_sap_gui_session_screenshot(guiSessionId: str, filePath: str) -> SapGuiS
                 imageFormat=target_path.suffix.lstrip(".").lower() or "bmp",
                 sizeBytes=size_bytes,
                 windowTitle=_read_window_title(session),
+                windowIds=captured_window_ids,
+                windowCount=len(captured_window_ids),
             ),
         })
     except KeyError as exc:
-        return SapGuiSessionScreenshotResponse.parse_obj({
+        return SapGuiSessionScreenshotResponse.model_validate({
             "result": False,
             "httpCode": 404,
             "httpReason": "Not Found",
@@ -1644,7 +2224,7 @@ def call_sap_gui_session_screenshot(guiSessionId: str, filePath: str) -> SapGuiS
             "data": None,
         })
     except ValueError as exc:
-        return SapGuiSessionScreenshotResponse.parse_obj({
+        return SapGuiSessionScreenshotResponse.model_validate({
             "result": False,
             "httpCode": 400,
             "httpReason": "Bad Request",
@@ -1652,7 +2232,7 @@ def call_sap_gui_session_screenshot(guiSessionId: str, filePath: str) -> SapGuiS
             "data": None,
         })
     except Exception as exc:
-        return SapGuiSessionScreenshotResponse.parse_obj({
+        return SapGuiSessionScreenshotResponse.model_validate({
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",
@@ -1681,7 +2261,7 @@ def call_sap_gui_session_inspect(guiSessionId: str, maxDepth: int = 4) -> SapGui
             except Exception:
                 continue
 
-        return SapGuiSessionInspectResponse.parse_obj({
+        return SapGuiSessionInspectResponse.model_validate({
             "result": True,
             "httpCode": 200,
             "httpReason": "OK",
@@ -1699,7 +2279,7 @@ def call_sap_gui_session_inspect(guiSessionId: str, maxDepth: int = 4) -> SapGui
             ),
         })
     except KeyError as exc:
-        return SapGuiSessionInspectResponse.parse_obj({
+        return SapGuiSessionInspectResponse.model_validate({
             "result": False,
             "httpCode": 404,
             "httpReason": "Not Found",
@@ -1707,7 +2287,7 @@ def call_sap_gui_session_inspect(guiSessionId: str, maxDepth: int = 4) -> SapGui
             "data": None,
         })
     except Exception as exc:
-        return SapGuiSessionInspectResponse.parse_obj({
+        return SapGuiSessionInspectResponse.model_validate({
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",
@@ -1762,7 +2342,7 @@ def call_sap_gui_session_read_message(guiSessionId: str) -> SapGuiSessionReadMes
         info = getattr(session, "Info", None)
         message = _read_visible_message(session)
 
-        return SapGuiSessionReadMessageResponse.parse_obj({
+        return SapGuiSessionReadMessageResponse.model_validate({
             "result": True,
             "httpCode": 200,
             "httpReason": "OK",
@@ -1778,7 +2358,7 @@ def call_sap_gui_session_read_message(guiSessionId: str) -> SapGuiSessionReadMes
             ),
         })
     except KeyError as exc:
-        return SapGuiSessionReadMessageResponse.parse_obj({
+        return SapGuiSessionReadMessageResponse.model_validate({
             "result": False,
             "httpCode": 404,
             "httpReason": "Not Found",
@@ -1786,7 +2366,7 @@ def call_sap_gui_session_read_message(guiSessionId: str) -> SapGuiSessionReadMes
             "data": None,
         })
     except Exception as exc:
-        return SapGuiSessionReadMessageResponse.parse_obj({
+        return SapGuiSessionReadMessageResponse.model_validate({
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",
@@ -1824,7 +2404,7 @@ def call_sap_gui_session_actions(guiSessionId: str, request: SapGuiSessionAction
         info = getattr(session, "Info", None)
         message = _read_visible_message(session)
 
-        return SapGuiSessionActionsResponse.parse_obj({
+        return SapGuiSessionActionsResponse.model_validate({
             "result": True,
             "httpCode": 200,
             "httpReason": "OK",
@@ -1843,7 +2423,7 @@ def call_sap_gui_session_actions(guiSessionId: str, request: SapGuiSessionAction
             ),
         })
     except KeyError as exc:
-        return SapGuiSessionActionsResponse.parse_obj({
+        return SapGuiSessionActionsResponse.model_validate({
             "result": False,
             "httpCode": 404,
             "httpReason": "Not Found",
@@ -1851,7 +2431,7 @@ def call_sap_gui_session_actions(guiSessionId: str, request: SapGuiSessionAction
             "data": None,
         })
     except ValueError as exc:
-        return SapGuiSessionActionsResponse.parse_obj({
+        return SapGuiSessionActionsResponse.model_validate({
             "result": False,
             "httpCode": 400,
             "httpReason": "Bad Request",
@@ -1859,7 +2439,7 @@ def call_sap_gui_session_actions(guiSessionId: str, request: SapGuiSessionAction
             "data": None,
         })
     except TimeoutError as exc:
-        return SapGuiSessionActionsResponse.parse_obj({
+        return SapGuiSessionActionsResponse.model_validate({
             "result": False,
             "httpCode": 408,
             "httpReason": "Request Timeout",
@@ -1867,7 +2447,7 @@ def call_sap_gui_session_actions(guiSessionId: str, request: SapGuiSessionAction
             "data": None,
         })
     except Exception as exc:
-        return SapGuiSessionActionsResponse.parse_obj({
+        return SapGuiSessionActionsResponse.model_validate({
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",
@@ -1924,7 +2504,7 @@ def call_sap_gui_recording_start(guiSessionId: str, folderPath: str) -> SapGuiRe
         _start_recording_event_listener(recording_context)
         _save_metadata(recording_context)
 
-        return SapGuiRecordingStartResponse.parse_obj({
+        return SapGuiRecordingStartResponse.model_validate({
             "result": True,
             "httpCode": 200,
             "httpReason": "OK",
@@ -1937,7 +2517,7 @@ def call_sap_gui_recording_start(guiSessionId: str, folderPath: str) -> SapGuiRe
             ),
         })
     except KeyError as exc:
-        return SapGuiRecordingStartResponse.parse_obj({
+        return SapGuiRecordingStartResponse.model_validate({
             "result": False,
             "httpCode": 404,
             "httpReason": "Not Found",
@@ -1945,7 +2525,7 @@ def call_sap_gui_recording_start(guiSessionId: str, folderPath: str) -> SapGuiRe
             "data": None,
         })
     except ValueError as exc:
-        return SapGuiRecordingStartResponse.parse_obj({
+        return SapGuiRecordingStartResponse.model_validate({
             "result": False,
             "httpCode": 400,
             "httpReason": "Bad Request",
@@ -1965,7 +2545,7 @@ def call_sap_gui_recording_start(guiSessionId: str, folderPath: str) -> SapGuiRe
                     recording_context.worker.join(timeout=5.0)
             except Exception:
                 pass
-        return SapGuiRecordingStartResponse.parse_obj({
+        return SapGuiRecordingStartResponse.model_validate({
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",
@@ -2007,7 +2587,7 @@ def call_sap_gui_recording_stop(guiSessionId: str) -> SapGuiRecordingStopRespons
         screenshot_count = len(captures)
         GUI_RECORDINGS.pop(guiSessionId, None)
 
-        return SapGuiRecordingStopResponse.parse_obj({
+        return SapGuiRecordingStopResponse.model_validate({
             "result": True,
             "httpCode": 200,
             "httpReason": "OK",
@@ -2023,7 +2603,7 @@ def call_sap_gui_recording_stop(guiSessionId: str) -> SapGuiRecordingStopRespons
             ),
         })
     except KeyError as exc:
-        return SapGuiRecordingStopResponse.parse_obj({
+        return SapGuiRecordingStopResponse.model_validate({
             "result": False,
             "httpCode": 404,
             "httpReason": "Not Found",
@@ -2031,7 +2611,7 @@ def call_sap_gui_recording_stop(guiSessionId: str) -> SapGuiRecordingStopRespons
             "data": None,
         })
     except ValueError as exc:
-        return SapGuiRecordingStopResponse.parse_obj({
+        return SapGuiRecordingStopResponse.model_validate({
             "result": False,
             "httpCode": 400,
             "httpReason": "Bad Request",
@@ -2039,7 +2619,7 @@ def call_sap_gui_recording_stop(guiSessionId: str) -> SapGuiRecordingStopRespons
             "data": None,
         })
     except Exception as exc:
-        return SapGuiRecordingStopResponse.parse_obj({
+        return SapGuiRecordingStopResponse.model_validate({
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",

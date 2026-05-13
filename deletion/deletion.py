@@ -68,7 +68,7 @@ def parse_deletion_delete_response(response) -> DeletionDeleteResponse:
 			messageText=message_root.get("del:text", "") or ""
 		)
 
-		return DeletionDeleteResponse.parse_obj({
+		return DeletionDeleteResponse.model_validate({
 			"result": output.isDeleted,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -77,7 +77,7 @@ def parse_deletion_delete_response(response) -> DeletionDeleteResponse:
 		})
 
 	except Exception as e:
-		return DeletionDeleteResponse.parse_obj({
+		return DeletionDeleteResponse.model_validate({
 			"result": False,
 			"httpCode": response.status_code if hasattr(response, "status_code") else 500,
 			"httpReason": response.reason if hasattr(response, "reason") else "Internal Server Error",
@@ -91,7 +91,7 @@ def call_deletion_delete(systemId: str, objectUri: str, transportNumber: str = "
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DeletionDeleteResponse.parse_obj({
+			return DeletionDeleteResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -113,7 +113,7 @@ def call_deletion_delete(systemId: str, objectUri: str, transportNumber: str = "
 		response = get_session(systemId).post(url, headers=headers, data=payload.encode("utf-8"))
 
 		if response.status_code != 200:
-			return DeletionDeleteResponse.parse_obj({
+			return DeletionDeleteResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -124,7 +124,7 @@ def call_deletion_delete(systemId: str, objectUri: str, transportNumber: str = "
 		return parse_deletion_delete_response(response)
 
 	except Exception as e:
-		return DeletionDeleteResponse.parse_obj({
+		return DeletionDeleteResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",

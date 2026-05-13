@@ -170,7 +170,7 @@ def _build_db_settings_update_payload(current_xml: str, request: DdicTableDbSett
 def parse_ddic_table_db_settings_read_response(systemId: str, tableName: str, response) -> DdicTableDbSettingsReadResponse:
 	try:
 		output = _parse_db_settings_response(systemId, tableName, response)
-		return DdicTableDbSettingsReadResponse.parse_obj({
+		return DdicTableDbSettingsReadResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -178,7 +178,7 @@ def parse_ddic_table_db_settings_read_response(systemId: str, tableName: str, re
 			"data": output
 		})
 	except Exception as e:
-		return DdicTableDbSettingsReadResponse.parse_obj({
+		return DdicTableDbSettingsReadResponse.model_validate({
 			"result": False,
 			"httpCode": response.status_code if hasattr(response, "status_code") else 500,
 			"httpReason": response.reason if hasattr(response, "reason") else "Internal Server Error",
@@ -201,7 +201,7 @@ def parse_ddic_table_db_settings_lock_response(response) -> DdicTableDbSettingsL
 			modificationSupport=data_root.get("MODIFICATION_SUPPORT", "") or "",
 			scopeMessages=data_root.get("SCOPE_MESSAGES", "") or ""
 		)
-		return DdicTableDbSettingsLockResponse.parse_obj({
+		return DdicTableDbSettingsLockResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -209,7 +209,7 @@ def parse_ddic_table_db_settings_lock_response(response) -> DdicTableDbSettingsL
 			"data": output
 		})
 	except Exception as e:
-		return DdicTableDbSettingsLockResponse.parse_obj({
+		return DdicTableDbSettingsLockResponse.model_validate({
 			"result": False,
 			"httpCode": response.status_code if hasattr(response, "status_code") else 500,
 			"httpReason": response.reason if hasattr(response, "reason") else "Internal Server Error",
@@ -222,7 +222,7 @@ def call_ddic_table_db_settings_read(systemId: str, tableName: str) -> DdicTable
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicTableDbSettingsReadResponse.parse_obj({
+			return DdicTableDbSettingsReadResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -232,7 +232,7 @@ def call_ddic_table_db_settings_read(systemId: str, tableName: str) -> DdicTable
 
 		response = _get_ddic_table_db_settings_xml(systemId, tableName)
 		if response.status_code != 200:
-			return DdicTableDbSettingsReadResponse.parse_obj({
+			return DdicTableDbSettingsReadResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -242,7 +242,7 @@ def call_ddic_table_db_settings_read(systemId: str, tableName: str) -> DdicTable
 
 		return parse_ddic_table_db_settings_read_response(systemId, tableName, response)
 	except Exception as e:
-		return DdicTableDbSettingsReadResponse.parse_obj({
+		return DdicTableDbSettingsReadResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -274,7 +274,7 @@ def call_ddic_table_db_settings_update(
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicTableDbSettingsUpdateResponse.parse_obj({
+			return DdicTableDbSettingsUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -284,7 +284,7 @@ def call_ddic_table_db_settings_update(
 
 		current_response = _get_ddic_table_db_settings_xml(systemId, tableName)
 		if current_response.status_code != 200:
-			return DdicTableDbSettingsUpdateResponse.parse_obj({
+			return DdicTableDbSettingsUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": current_response.status_code,
 				"httpReason": current_response.reason,
@@ -305,7 +305,7 @@ def call_ddic_table_db_settings_update(
 		response = get_session(systemId).put(url, headers=headers, params=params, data=payload.encode("utf-8"))
 
 		if response.status_code != 200:
-			return DdicTableDbSettingsUpdateResponse.parse_obj({
+			return DdicTableDbSettingsUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -314,7 +314,7 @@ def call_ddic_table_db_settings_update(
 			})
 
 		output = _parse_db_settings_response(systemId, tableName, response)
-		return DdicTableDbSettingsUpdateResponse.parse_obj({
+		return DdicTableDbSettingsUpdateResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -322,7 +322,7 @@ def call_ddic_table_db_settings_update(
 			"data": output
 		})
 	except Exception as e:
-		return DdicTableDbSettingsUpdateResponse.parse_obj({
+		return DdicTableDbSettingsUpdateResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -341,7 +341,7 @@ def call_ddic_table_db_settings_update_raw(
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicTableDbSettingsUpdateResponse.parse_obj({
+			return DdicTableDbSettingsUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -361,7 +361,7 @@ def call_ddic_table_db_settings_update_raw(
 
 		response = get_session(systemId).put(url, headers=headers, params=params, data=rawXml.encode("utf-8"))
 		if response.status_code != 200:
-			return DdicTableDbSettingsUpdateResponse.parse_obj({
+			return DdicTableDbSettingsUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -370,7 +370,7 @@ def call_ddic_table_db_settings_update_raw(
 			})
 
 		output = _parse_db_settings_response(systemId, tableName, response)
-		return DdicTableDbSettingsUpdateResponse.parse_obj({
+		return DdicTableDbSettingsUpdateResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -378,7 +378,7 @@ def call_ddic_table_db_settings_update_raw(
 			"data": output
 		})
 	except Exception as e:
-		return DdicTableDbSettingsUpdateResponse.parse_obj({
+		return DdicTableDbSettingsUpdateResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -391,7 +391,7 @@ def call_ddic_table_db_settings_lock(systemId: str, tableName: str, accessMode: 
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicTableDbSettingsLockResponse.parse_obj({
+			return DdicTableDbSettingsLockResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -411,7 +411,7 @@ def call_ddic_table_db_settings_lock(systemId: str, tableName: str, accessMode: 
 		response = get_session(systemId).post(url, headers=headers, params=params)
 
 		if response.status_code != 200:
-			return DdicTableDbSettingsLockResponse.parse_obj({
+			return DdicTableDbSettingsLockResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -421,7 +421,7 @@ def call_ddic_table_db_settings_lock(systemId: str, tableName: str, accessMode: 
 
 		return parse_ddic_table_db_settings_lock_response(response)
 	except Exception as e:
-		return DdicTableDbSettingsLockResponse.parse_obj({
+		return DdicTableDbSettingsLockResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -434,7 +434,7 @@ def call_ddic_table_db_settings_unlock(systemId: str, tableName: str, lockHandle
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicTableDbSettingsUnlockResponse.parse_obj({
+			return DdicTableDbSettingsUnlockResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -449,7 +449,7 @@ def call_ddic_table_db_settings_unlock(systemId: str, tableName: str, lockHandle
 		response = get_session(systemId).post(url, headers=headers, params=params)
 
 		if response.status_code != 200:
-			return DdicTableDbSettingsUnlockResponse.parse_obj({
+			return DdicTableDbSettingsUnlockResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -457,7 +457,7 @@ def call_ddic_table_db_settings_unlock(systemId: str, tableName: str, lockHandle
 				"data": None
 			})
 
-		return DdicTableDbSettingsUnlockResponse.parse_obj({
+		return DdicTableDbSettingsUnlockResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -465,7 +465,7 @@ def call_ddic_table_db_settings_unlock(systemId: str, tableName: str, lockHandle
 			"data": None
 		})
 	except Exception as e:
-		return DdicTableDbSettingsUnlockResponse.parse_obj({
+		return DdicTableDbSettingsUnlockResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",

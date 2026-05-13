@@ -287,7 +287,7 @@ def parse_ddic_domain_create_response(response) -> DdicDomainCreateResponse:
 	try:
 		output = _parse_ddic_domain_response(response)
 
-		return DdicDomainCreateResponse.parse_obj({
+		return DdicDomainCreateResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -296,7 +296,7 @@ def parse_ddic_domain_create_response(response) -> DdicDomainCreateResponse:
 		})
 
 	except Exception as e:
-		return DdicDomainCreateResponse.parse_obj({
+		return DdicDomainCreateResponse.model_validate({
 			"result": False,
 			"httpCode": response.status_code if hasattr(response, "status_code") else 500,
 			"httpReason": response.reason if hasattr(response, "reason") else "Internal Server Error",
@@ -310,7 +310,7 @@ def parse_ddic_domain_read_response(response) -> DdicDomainReadResponse:
 	try:
 		output = _parse_ddic_domain_response(response)
 
-		return DdicDomainReadResponse.parse_obj({
+		return DdicDomainReadResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -319,7 +319,7 @@ def parse_ddic_domain_read_response(response) -> DdicDomainReadResponse:
 		})
 
 	except Exception as e:
-		return DdicDomainReadResponse.parse_obj({
+		return DdicDomainReadResponse.model_validate({
 			"result": False,
 			"httpCode": response.status_code if hasattr(response, "status_code") else 500,
 			"httpReason": response.reason if hasattr(response, "reason") else "Internal Server Error",
@@ -345,7 +345,7 @@ def parse_ddic_domain_lock_response(response) -> DdicDomainLockResponse:
 			scopeMessages=data_root.get("SCOPE_MESSAGES", "") or ""
 		)
 
-		return DdicDomainLockResponse.parse_obj({
+		return DdicDomainLockResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -354,7 +354,7 @@ def parse_ddic_domain_lock_response(response) -> DdicDomainLockResponse:
 		})
 
 	except Exception as e:
-		return DdicDomainLockResponse.parse_obj({
+		return DdicDomainLockResponse.model_validate({
 			"result": False,
 			"httpCode": response.status_code if hasattr(response, "status_code") else 500,
 			"httpReason": response.reason if hasattr(response, "reason") else "Internal Server Error",
@@ -376,7 +376,7 @@ def call_ddic_domain_create(
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicDomainCreateResponse.parse_obj({
+			return DdicDomainCreateResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -406,7 +406,7 @@ def call_ddic_domain_create(
 		response = get_session(systemId).post(url, headers=headers, params=params, data=payload.encode("utf-8"))
 
 		if response.status_code != 201:
-			return DdicDomainCreateResponse.parse_obj({
+			return DdicDomainCreateResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -417,7 +417,7 @@ def call_ddic_domain_create(
 		return parse_ddic_domain_create_response(response)
 
 	except Exception as e:
-		return DdicDomainCreateResponse.parse_obj({
+		return DdicDomainCreateResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -431,7 +431,7 @@ def call_ddic_domain_read(systemId: str, name: str) -> DdicDomainReadResponse:
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicDomainReadResponse.parse_obj({
+			return DdicDomainReadResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -442,7 +442,7 @@ def call_ddic_domain_read(systemId: str, name: str) -> DdicDomainReadResponse:
 		response = _get_ddic_domain_xml(systemId, name)
 
 		if response.status_code != 200:
-			return DdicDomainReadResponse.parse_obj({
+			return DdicDomainReadResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -453,7 +453,7 @@ def call_ddic_domain_read(systemId: str, name: str) -> DdicDomainReadResponse:
 		return parse_ddic_domain_read_response(response)
 
 	except Exception as e:
-		return DdicDomainReadResponse.parse_obj({
+		return DdicDomainReadResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -486,7 +486,7 @@ def call_ddic_domain_update(
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicDomainUpdateResponse.parse_obj({
+			return DdicDomainUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -496,7 +496,7 @@ def call_ddic_domain_update(
 
 		current_response = _get_ddic_domain_xml(systemId, name)
 		if current_response.status_code != 200:
-			return DdicDomainUpdateResponse.parse_obj({
+			return DdicDomainUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": current_response.status_code,
 				"httpReason": current_response.reason,
@@ -535,7 +535,7 @@ def call_ddic_domain_update(
 		response = get_session(systemId).put(url, headers=headers, params=params, data=payload.encode("utf-8"))
 
 		if response.status_code != 200:
-			return DdicDomainUpdateResponse.parse_obj({
+			return DdicDomainUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -544,7 +544,7 @@ def call_ddic_domain_update(
 			})
 
 		output = _parse_ddic_domain_response(response)
-		return DdicDomainUpdateResponse.parse_obj({
+		return DdicDomainUpdateResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -553,7 +553,7 @@ def call_ddic_domain_update(
 		})
 
 	except Exception as e:
-		return DdicDomainUpdateResponse.parse_obj({
+		return DdicDomainUpdateResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -573,7 +573,7 @@ def call_ddic_domain_update_raw(
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicDomainUpdateResponse.parse_obj({
+			return DdicDomainUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -593,7 +593,7 @@ def call_ddic_domain_update_raw(
 
 		response = get_session(systemId).put(url, headers=headers, params=params, data=rawXml.encode("utf-8"))
 		if response.status_code != 200:
-			return DdicDomainUpdateResponse.parse_obj({
+			return DdicDomainUpdateResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -602,7 +602,7 @@ def call_ddic_domain_update_raw(
 			})
 
 		output = _parse_ddic_domain_response(response)
-		return DdicDomainUpdateResponse.parse_obj({
+		return DdicDomainUpdateResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -610,7 +610,7 @@ def call_ddic_domain_update_raw(
 			"data": output
 		})
 	except Exception as e:
-		return DdicDomainUpdateResponse.parse_obj({
+		return DdicDomainUpdateResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -624,7 +624,7 @@ def call_ddic_domain_lock(systemId: str, name: str, accessMode: str = "MODIFY") 
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicDomainLockResponse.parse_obj({
+			return DdicDomainLockResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -648,7 +648,7 @@ def call_ddic_domain_lock(systemId: str, name: str, accessMode: str = "MODIFY") 
 		response = get_session(systemId).post(url, headers=headers, params=params)
 
 		if response.status_code != 200:
-			return DdicDomainLockResponse.parse_obj({
+			return DdicDomainLockResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -659,7 +659,7 @@ def call_ddic_domain_lock(systemId: str, name: str, accessMode: str = "MODIFY") 
 		return parse_ddic_domain_lock_response(response)
 
 	except Exception as e:
-		return DdicDomainLockResponse.parse_obj({
+		return DdicDomainLockResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",
@@ -673,7 +673,7 @@ def call_ddic_domain_unlock(systemId: str, name: str, lockHandle: str) -> DdicDo
 	try:
 		is_logged_in, error_msg = ensure_login(systemId)
 		if not is_logged_in:
-			return DdicDomainUnlockResponse.parse_obj({
+			return DdicDomainUnlockResponse.model_validate({
 				"result": False,
 				"httpCode": 401,
 				"httpReason": "Unauthorized",
@@ -692,7 +692,7 @@ def call_ddic_domain_unlock(systemId: str, name: str, lockHandle: str) -> DdicDo
 		response = get_session(systemId).post(url, headers=headers, params=params)
 
 		if response.status_code != 200:
-			return DdicDomainUnlockResponse.parse_obj({
+			return DdicDomainUnlockResponse.model_validate({
 				"result": False,
 				"httpCode": response.status_code,
 				"httpReason": response.reason,
@@ -700,7 +700,7 @@ def call_ddic_domain_unlock(systemId: str, name: str, lockHandle: str) -> DdicDo
 				"data": None
 			})
 
-		return DdicDomainUnlockResponse.parse_obj({
+		return DdicDomainUnlockResponse.model_validate({
 			"result": True,
 			"httpCode": response.status_code,
 			"httpReason": response.reason,
@@ -709,7 +709,7 @@ def call_ddic_domain_unlock(systemId: str, name: str, lockHandle: str) -> DdicDo
 		})
 
 	except Exception as e:
-		return DdicDomainUnlockResponse.parse_obj({
+		return DdicDomainUnlockResponse.model_validate({
 			"result": False,
 			"httpCode": 500,
 			"httpReason": "Internal Server Error",

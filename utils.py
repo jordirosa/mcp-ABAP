@@ -28,7 +28,7 @@ def read_text_file(filePath: str) -> tuple[str, int]:
 
 def build_file_transfer_response(filePath: str, uri: str, mimeType: str, sizeBytes: int, message: str) -> FileTransferResponse:
     """Build a successful file transfer response."""
-    return FileTransferResponse.parse_obj({
+    return FileTransferResponse.model_validate({
         "result": True,
         "httpCode": 200,
         "httpReason": "OK",
@@ -44,7 +44,7 @@ def build_file_transfer_response(filePath: str, uri: str, mimeType: str, sizeByt
 
 def build_file_transfer_error(message: str, httpCode: int = 500, httpReason: str = "Internal Server Error") -> FileTransferResponse:
     """Build a failed file transfer response."""
-    return FileTransferResponse.parse_obj({
+    return FileTransferResponse.model_validate({
         "result": False,
         "httpCode": httpCode,
         "httpReason": httpReason,

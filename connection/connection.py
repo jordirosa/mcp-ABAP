@@ -76,7 +76,7 @@ def call_login(systemId: str) -> LoginResponse:
     try:
         system_config = get_system_config(systemId)
     except KeyError as exc:
-        return LoginResponse.parse_obj({
+        return LoginResponse.model_validate({
             "result": False,
             "httpCode": 404,
             "httpReason": "Not Found",
@@ -86,7 +86,7 @@ def call_login(systemId: str) -> LoginResponse:
 
     get_csrf_token(systemId)
     if not get_session(systemId):
-        return LoginResponse.parse_obj({
+        return LoginResponse.model_validate({
             "result": False,
             "httpCode": 500,
             "httpReason": "Internal Server Error",
@@ -94,7 +94,7 @@ def call_login(systemId: str) -> LoginResponse:
             "data": None
         })
 
-    return LoginResponse.parse_obj({
+    return LoginResponse.model_validate({
         "result": True,
         "httpCode": 200,
         "httpReason": "OK",
@@ -108,7 +108,7 @@ def call_logout(systemId: str) -> LogoutResponse:
     try:
         system_config = get_system_config(systemId)
     except KeyError as exc:
-        return LogoutResponse.parse_obj({
+        return LogoutResponse.model_validate({
             "result": False,
             "httpCode": 404,
             "httpReason": "Not Found",
@@ -121,7 +121,7 @@ def call_logout(systemId: str) -> LogoutResponse:
         session.close()
         set_session(systemId, None)
 
-    return LogoutResponse.parse_obj({
+    return LogoutResponse.model_validate({
         "result": True,
         "httpCode": 200,
         "httpReason": "OK",
