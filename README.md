@@ -34,13 +34,15 @@ The project is designed to run locally. SAP systems and credentials are configur
    pip install -r requirements.txt
    ```
 
-4. Create your local configuration:
+4. Optionally create your local configuration from the template:
 
    ```powershell
    copy .env.example .env
    ```
 
-5. Edit `.env` and fill `SAP_SYSTEMS_JSON` with your available SAP systems. Each system should define at least:
+   You can skip this step and start the server without `.env`; the experimental dashboard can create the local configuration for you.
+
+5. If you configure the file manually, edit `.env` and fill `SAP_SYSTEMS_JSON` with your available SAP systems. Each system should define at least:
 
    - `id`
    - `name`

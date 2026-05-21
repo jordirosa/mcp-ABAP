@@ -103,10 +103,7 @@ def _load_system_configs() -> dict[str, SapSystemConfig]:
         raw_systems = _load_legacy_single_system()
 
     if not raw_systems:
-        raise ValueError(
-            "No hay sistemas SAP configurados. Define SAP_SYSTEMS_JSON en el archivo .env "
-            "o usa las variables legacy SAP_SERVER, SAP_USER, SAP_PASSWORD y SAP_CLIENT."
-        )
+        return {}
 
     configs: dict[str, SapSystemConfig] = {}
     required_keys = ["id", "name", "type", "server", "user", "password", "client"]
@@ -158,6 +155,11 @@ def get_system_config(systemId: str) -> SapSystemConfig:
     normalized_id = systemId.upper()
     if normalized_id not in SYSTEM_CONFIGS:
         available_ids = ", ".join(sorted(SYSTEM_CONFIGS.keys()))
+        if not available_ids:
+            raise KeyError(
+                f"SAP system '{systemId}' is not configured. Add a system through the dashboard "
+                "or define SAP_SYSTEMS_JSON in the local .env file."
+            )
         raise KeyError(
             f"El sistema SAP '{systemId}' no existe. Sistemas disponibles: {available_ids}."
         )
