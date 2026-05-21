@@ -3,8 +3,11 @@ import asyncio
 import json
 import logging
 import time
+import urllib.error
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Callable
 from urllib.parse import quote, unquote
 
 from dashboard.dashboard import (
@@ -159,6 +162,58 @@ def _configure_startup_logging() -> None:
     LOGGER.propagate = False
 
 
+def _build_startup_urls(host: str, port: int, path: str) -> dict[str, str]:
+    """Build the URLs shown once the HTTP dashboard is reachable."""
+    normalized_path = str(path or RUN_PATH).strip() or RUN_PATH
+    if not normalized_path.startswith("/"):
+        normalized_path = f"/{normalized_path}"
+    base = f"http://{host}:{int(port)}"
+    return {
+        "mcp": f"{base}{normalized_path.rstrip('/')}",
+        "dashboard": f"{base}{HTTP_DASHBOARD_PATH}",
+    }
+
+
+def _read_http_status(url: str, timeout_seconds: float) -> int:
+    request = urllib.request.Request(url, method="GET")
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        return int(response.status)
+
+
+async def _wait_for_dashboard_http_200(
+    dashboard_url: str,
+    timeout_seconds: float = 30.0,
+    retry_interval_seconds: float = 0.25,
+    status_reader: Callable[[str, float], int] | None = None,
+) -> bool:
+    """Wait until the dashboard route responds with HTTP 200."""
+    reader = status_reader or _read_http_status
+    deadline = time.perf_counter() + timeout_seconds
+    while time.perf_counter() < deadline:
+        try:
+            status = await asyncio.to_thread(reader, dashboard_url, min(2.0, retry_interval_seconds))
+            if status == 200:
+                return True
+        except (OSError, urllib.error.URLError, TimeoutError):
+            pass
+        await asyncio.sleep(retry_interval_seconds)
+    return False
+
+
+async def _log_startup_urls_when_dashboard_ready(startup_started: float) -> None:
+    urls = _build_startup_urls(RUN_HOST, RUN_PORT, RUN_PATH)
+    if await _wait_for_dashboard_http_200(urls["dashboard"]):
+        elapsed = time.perf_counter() - startup_started
+        LOGGER.info("ABAP MCP server is ready (%.2fs)", elapsed)
+        LOGGER.info("MCP endpoint: %s", urls["mcp"])
+        LOGGER.info("Dashboard: %s", urls["dashboard"])
+        return
+    LOGGER.warning(
+        "ABAP MCP server started, but dashboard readiness could not be confirmed within 30 seconds: %s",
+        urls["dashboard"],
+    )
+
+
 @asynccontextmanager
 async def abap_lifespan(_server: FastMCP):
     """Warm heavy runtime pieces only when running the MCP over HTTP."""
@@ -168,12 +223,12 @@ async def abap_lifespan(_server: FastMCP):
 
     _configure_startup_logging()
     startup_started = time.perf_counter()
-    LOGGER.info("Arrancando servidor ABAP MCP...")
+    LOGGER.info("Starting ABAP MCP server...")
     knowledge_started = time.perf_counter()
     try:
         knowledge_info = warm_knowledge_runtime()
         LOGGER.info(
-            "Knowledge runtime listo. collection=%s chroma=%s documents=%s model=%s (%.2fs)",
+            "Knowledge runtime ready. collection=%s chroma=%s documents=%s model=%s (%.2fs)",
             knowledge_info.collectionName,
             knowledge_info.chromaPath,
             knowledge_info.documentsPath,
@@ -182,13 +237,17 @@ async def abap_lifespan(_server: FastMCP):
         )
     except Exception as exc:
         LOGGER.warning(
-            "Knowledge runtime no se pudo precalentar y se inicializará bajo demanda: %s (%.2fs)",
+            "Knowledge runtime could not be warmed up and will initialize on demand: %s (%.2fs)",
             str(exc),
             time.perf_counter() - knowledge_started,
         )
-    LOGGER.info("Servidor listo en http://%s:%s%s (%.2fs)", RUN_HOST, RUN_PORT, RUN_PATH, time.perf_counter() - startup_started)
-    yield
-    LOGGER.info("Apagando servidor ABAP MCP...")
+    readiness_task = asyncio.create_task(_log_startup_urls_when_dashboard_ready(startup_started))
+    try:
+        yield
+    finally:
+        if not readiness_task.done():
+            readiness_task.cancel()
+        LOGGER.info("Shutting down ABAP MCP server...")
 
 
 def _get_playwright_status() -> dict:
@@ -260,7 +319,7 @@ def _dashboard_html() -> str:
         linear-gradient(145deg, #081018 0%, #0c1117 36%, #121b27 100%);
       min-height: 100vh;
     }}
-    .wrap {{ max-width: 1180px; margin: 0 auto; padding: 32px 20px 48px; }}
+    .wrap {{ width: 100%; margin: 0; padding: 32px 20px 48px; }}
     h1 {{ margin: 0 0 8px; font-size: 34px; }}
     p {{ color: var(--muted); margin: 0 0 24px; }}
     .panel {{
@@ -484,6 +543,11 @@ def _dashboard_html() -> str:
       background: var(--danger);
       box-shadow: 0 0 0 4px rgba(255, 107, 122, 0.14);
     }}
+    .save-dot {{
+      display: inline-block;
+      vertical-align: -1px;
+      margin-right: 10px;
+    }}
     .subtle {{
       color: var(--muted);
       font-size: 13px;
@@ -505,6 +569,51 @@ def _dashboard_html() -> str:
       min-height: 24px;
       font-weight: 600;
       color: var(--accent);
+    }}
+    .toast-region {{
+      position: fixed;
+      top: 18px;
+      right: 18px;
+      z-index: 2000;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: min(420px, calc(100vw - 36px));
+      pointer-events: none;
+    }}
+    .toast {{
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: start;
+      padding: 13px 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: 14px;
+      background: rgba(17, 25, 35, 0.98);
+      color: var(--ink);
+      box-shadow: 0 18px 44px var(--shadow);
+      pointer-events: auto;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }}
+    .toast.info {{ border-color: rgba(100, 210, 255, 0.45); }}
+    .toast.success {{ border-color: rgba(101, 214, 166, 0.55); }}
+    .toast.warning {{ border-color: rgba(245, 199, 106, 0.58); }}
+    .toast.error {{ border-color: rgba(255, 107, 122, 0.62); }}
+    .toast-message {{
+      font-weight: 650;
+      line-height: 1.42;
+    }}
+    .toast-close {{
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--ink);
+      border-radius: 999px;
+      width: 26px;
+      height: 26px;
+      cursor: pointer;
+      font-weight: 800;
+      line-height: 1;
     }}
     code {{
       background: rgba(255, 255, 255, 0.05);
@@ -564,6 +673,22 @@ def _dashboard_html() -> str:
       align-items: center;
       padding-top: 12px;
     }}
+    .language-control {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 220px;
+    }}
+    .language-control label {{
+      margin: 0;
+      color: var(--muted);
+      white-space: nowrap;
+    }}
+    .language-control select {{
+      width: auto;
+      min-width: 132px;
+      padding: 8px 10px;
+    }}
     @media (max-width: 760px) {{
       .grid {{ grid-template-columns: 1fr; }}
       h1 {{ font-size: 28px; }}
@@ -577,14 +702,20 @@ def _dashboard_html() -> str:
       <div class="toolbar" style="margin-bottom:14px;">
         <div>
           <h1>ABAP MCP Dashboard</h1>
-          <p style="margin:8px 0 0;">Gestiona las conexiones SAP configuradas en el archivo <code>.env</code> sin editarlo a mano.</p>
+          <p style="margin:8px 0 0;" data-i18n="hero.subtitle">Gestiona las conexiones SAP configuradas en el archivo <code>.env</code> sin editarlo a mano.</p>
         </div>
-        <button class="button" id="saveButton" type="button">Guardar cambios</button>
+        <div class="language-control">
+          <label for="languageSelect" data-i18n="language.label">Idioma</label>
+          <select id="languageSelect" aria-label="Idioma">
+            <option value="es">Español</option>
+            <option value="en">English</option>
+          </select>
+        </div>
       </div>
     </div>
 
     <div class="panel" style="padding:14px 18px;">
-      <div class="tabbar" role="tablist" aria-label="Secciones del dashboard">
+      <div class="tabbar" role="tablist" aria-label="Secciones del dashboard" data-i18n-aria-label="tabs.aria">
         <button class="tab-button active" id="tabButtonMcp" data-tab="mcp" type="button" role="tab" aria-selected="true">MCP</button>
         <button class="tab-button" id="tabButtonEnv" data-tab="env" type="button" role="tab" aria-selected="false">.env</button>
         <button class="tab-button" id="tabButtonMemory" data-tab="memory" type="button" role="tab" aria-selected="false">Memory</button>
@@ -595,8 +726,8 @@ def _dashboard_html() -> str:
       <div class="panel">
         <div class="toolbar">
           <div>
-            <strong>Clientes MCP</strong>
-            <p style="margin:8px 0 0;">Comprueba si el servidor ABAP MCP está registrado en cada cliente local.</p>
+            <strong data-i18n="mcp.title">Clientes MCP</strong>
+            <p style="margin:8px 0 0;" data-i18n="mcp.description">Comprueba si el servidor ABAP MCP está registrado en cada cliente local.</p>
           </div>
         </div>
         <div class="table-wrap">
@@ -604,10 +735,10 @@ def _dashboard_html() -> str:
             <thead>
               <tr>
                 <th>CLI</th>
-                <th>Cliente</th>
-                <th>Fichero</th>
+                <th data-i18n="mcp.client">Cliente</th>
+                <th data-i18n="mcp.file">Fichero</th>
                 <th>MCP</th>
-                <th>Acciones</th>
+                <th data-i18n="common.actions">Acciones</th>
                 <th>Info</th>
               </tr>
             </thead>
@@ -620,17 +751,17 @@ def _dashboard_html() -> str:
         <div class="toolbar">
           <div>
             <strong>Playwright</strong>
-            <p style="margin:8px 0 0;">Requerido para las tools de SAP WebGUI. Necesita el paquete Python y el navegador Chromium.</p>
+            <p style="margin:8px 0 0;" data-i18n="playwright.description">Requerido para las tools de SAP WebGUI. Necesita el paquete Python y el navegador Chromium.</p>
           </div>
-          <button class="button secondary" id="refreshPlaywrightButton" type="button">Actualizar</button>
+          <button class="button secondary" id="refreshPlaywrightButton" type="button" data-i18n="common.refresh">Actualizar</button>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Componente</th>
-                <th>Estado</th>
-                <th>Acción</th>
+                <th data-i18n="playwright.component">Componente</th>
+                <th data-i18n="playwright.status">Estado</th>
+                <th data-i18n="common.action">Acción</th>
               </tr>
             </thead>
             <tbody id="playwrightTableBody"></tbody>
@@ -643,33 +774,33 @@ def _dashboard_html() -> str:
     <section id="tabPanelEnv" class="tab-panel" hidden>
       <div class="panel">
         <div class="field">
-          <label for="sapGuiExecutablePath">Ruta de <code>saplogon.exe</code></label>
-          <input id="sapGuiExecutablePath" type="text" placeholder="Opcional. Si está vacío, el servidor intentará encontrar SAP GUI por PATH o rutas habituales." />
-        </div>
-        <div class="toolbar">
-          <div class="status" id="status"></div>
+          <label for="sapGuiExecutablePath" data-i18n="env.saplogonPath">Ruta de <code>saplogon.exe</code></label>
+          <input id="sapGuiExecutablePath" type="text" placeholder="Opcional. Si está vacío, el servidor intentará encontrar SAP GUI por PATH o rutas habituales." data-i18n-placeholder="env.saplogonPlaceholder" />
         </div>
       </div>
 
       <div class="panel">
         <div class="toolbar">
-          <strong>Conexiones SAP</strong>
-          <button class="button secondary" id="addSystemButton" type="button">Añadir conexión</button>
+          <strong data-i18n="env.connections">Conexiones SAP</strong>
+          <div class="inline-actions">
+            <button class="button" id="saveButton" type="button"><span class="signal-dot ok save-dot" id="saveDirtyDot"></span><span data-i18n="common.saveChanges">Guardar cambios</span></button>
+            <button class="button secondary" id="addSystemButton" type="button" data-i18n="env.addConnection">Añadir conexión</button>
+          </div>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>ID</th>
-                <th>Nombre</th>
-                <th>Tipo</th>
-                <th>Servidor</th>
-                <th>Cliente</th>
-                <th>Idioma</th>
+                <th data-i18n="field.name">Nombre</th>
+                <th data-i18n="field.type">Tipo</th>
+                <th data-i18n="field.server">Servidor</th>
+                <th data-i18n="field.client">Cliente</th>
+                <th data-i18n="field.language">Idioma</th>
                 <th>SSL</th>
-                <th>Entrada SAP GUI</th>
+                <th data-i18n="field.sapGuiEntry">Entrada SAP GUI</th>
                 <th>URL WebGUI</th>
-                <th>Acciones</th>
+                <th data-i18n="common.actions">Acciones</th>
               </tr>
             </thead>
             <tbody id="systemsTableBody"></tbody>
@@ -683,20 +814,20 @@ def _dashboard_html() -> str:
         <div class="toolbar">
           <div>
             <strong>Memory</strong>
-            <p style="margin:8px 0 0;">Explora los documentos locales de conocimiento almacenados en <code>db/documents</code>.</p>
+            <p style="margin:8px 0 0;" data-i18n="memory.description">Explora los documentos locales de conocimiento almacenados en <code>db/documents</code>.</p>
           </div>
         </div>
         <div class="memory-layout">
           <div class="memory-pane">
             <div class="memory-filter">
-              <input id="memoryFilter" type="text" placeholder="Filtrar documentos y carpetas..." />
+              <input id="memoryFilter" type="text" placeholder="Filtrar documentos y carpetas..." data-i18n-placeholder="memory.filterPlaceholder" />
             </div>
             <div class="tree-scroll memory-tree" id="memoryTree"></div>
           </div>
           <div class="memory-pane">
             <div class="viewer-toolbar">
-              <strong id="memoryViewerTitle">Documento</strong>
-              <span class="subtle" id="memoryViewerMeta">Selecciona un fichero .md o .pdf</span>
+              <strong id="memoryViewerTitle" data-i18n="memory.document">Documento</strong>
+              <span class="subtle" id="memoryViewerMeta" data-i18n="memory.selectFile">Selecciona un fichero .md o .pdf</span>
             </div>
             <div class="viewer-scroll" id="memoryViewer"></div>
           </div>
@@ -709,7 +840,7 @@ def _dashboard_html() -> str:
     <form method="dialog" class="modal" id="systemForm">
       <div class="toolbar">
         <strong id="dialogTitle">Conexión SAP</strong>
-        <button class="button secondary" type="button" id="closeDialogButton">Cerrar</button>
+        <button class="button secondary" type="button" id="closeDialogButton" data-i18n="common.close">Cerrar</button>
       </div>
       <div class="grid">
         <div class="field">
@@ -717,19 +848,19 @@ def _dashboard_html() -> str:
           <input id="systemId" type="text" maxlength="30" required />
         </div>
         <div class="field">
-          <label for="systemName">Nombre</label>
+          <label for="systemName" data-i18n="field.name">Nombre</label>
           <input id="systemName" type="text" required />
         </div>
         <div class="field">
-          <label for="systemType">Tipo</label>
+          <label for="systemType" data-i18n="field.type">Tipo</label>
           <input id="systemType" type="text" required />
         </div>
         <div class="field">
-          <label for="systemServer">Servidor</label>
+          <label for="systemServer" data-i18n="field.server">Servidor</label>
           <input id="systemServer" type="text" required />
         </div>
         <div class="field">
-          <label for="systemUser">Usuario</label>
+          <label for="systemUser" data-i18n="field.user">Usuario</label>
           <input id="systemUser" type="text" required />
         </div>
         <div class="field">
@@ -737,35 +868,35 @@ def _dashboard_html() -> str:
           <input id="systemPassword" type="password" required />
         </div>
         <div class="field">
-          <label for="systemClient">Cliente</label>
+          <label for="systemClient" data-i18n="field.client">Cliente</label>
           <input id="systemClient" type="text" required />
         </div>
         <div class="field">
-          <label for="systemLanguage">Idioma</label>
+          <label for="systemLanguage" data-i18n="field.language">Idioma</label>
           <input id="systemLanguage" type="text" value="EN" />
         </div>
         <div class="field full">
-          <label for="sapGuiConnectionName">Entrada de SAP GUI</label>
-          <input id="sapGuiConnectionName" type="text" placeholder="Nombre exacto en SAP Logon" />
+          <label for="sapGuiConnectionName" data-i18n="field.sapGuiEntry">Entrada de SAP GUI</label>
+          <input id="sapGuiConnectionName" type="text" placeholder="Nombre exacto en SAP Logon" data-i18n-placeholder="field.sapGuiEntryPlaceholder" />
         </div>
         <div class="field full">
           <label for="sapWebguiUrl">URL WebGUI</label>
-          <input id="sapWebguiUrl" type="text" placeholder="https://servidor:puerto/sap/bc/gui/sap/its/webgui" />
+          <input id="sapWebguiUrl" type="text" placeholder="https://servidor:puerto/sap/bc/gui/sap/its/webgui" data-i18n-placeholder="field.webguiPlaceholder" />
         </div>
         <div class="field full">
           <div class="inline-actions">
-            <button class="button secondary" type="button" id="importSapLogonButton">Importar desde SAP Logon</button>
-            <button class="button secondary" type="button" id="openPortHelpButton" title="Abrir ayuda para localizar el puerto HTTPS en SAP GUI">?</button>
+            <button class="button secondary" type="button" id="importSapLogonButton" data-i18n="saplogon.import">Importar desde SAP Logon</button>
+            <button class="button secondary" type="button" id="openPortHelpButton" title="Abrir ayuda para localizar el puerto HTTPS en SAP GUI" data-i18n-title="saplogon.helpTitle">?</button>
           </div>
         </div>
         <div class="field full checkbox-row">
           <input id="verifySsl" type="checkbox" />
-          <label for="verifySsl" style="margin:0;">Verificar certificados SSL</label>
+          <label for="verifySsl" style="margin:0;" data-i18n="field.verifySsl">Verificar certificados SSL</label>
         </div>
       </div>
       <div class="toolbar" style="margin-top:18px;">
         <div></div>
-        <button class="button" type="submit">Guardar conexión</button>
+        <button class="button" type="submit" data-i18n="env.saveConnection">Guardar conexión</button>
       </div>
     </form>
   </dialog>
@@ -773,19 +904,19 @@ def _dashboard_html() -> str:
   <dialog id="sapLogonDialog">
     <div class="modal">
       <div class="toolbar">
-        <strong>Entradas de SAP Logon</strong>
-        <button class="button secondary" type="button" id="closeSapLogonDialogButton">Cerrar</button>
+        <strong data-i18n="saplogon.entries">Entradas de SAP Logon</strong>
+        <button class="button secondary" type="button" id="closeSapLogonDialogButton" data-i18n="common.close">Cerrar</button>
       </div>
-      <p style="margin:0 0 14px; color: var(--muted);">Selecciona una entrada. El dashboard rellenará el nombre de conexión y además intentará abrir SAP GUI para localizar automáticamente el puerto HTTPS en <code>SMICM</code>.</p>
+      <p style="margin:0 0 14px; color: var(--muted);" data-i18n="saplogon.description">Selecciona una entrada. El dashboard rellenará el nombre de conexión y, si lo has indicado, intentará abrir SAP GUI para localizar automáticamente el puerto HTTPS en <code>SMICM</code>.</p>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Nombre</th>
+              <th data-i18n="field.name">Nombre</th>
               <th>ID sistema</th>
               <th>Host</th>
-              <th>Puerto</th>
-              <th>Acción</th>
+              <th data-i18n="field.port">Puerto</th>
+              <th data-i18n="common.action">Acción</th>
             </tr>
           </thead>
           <tbody id="sapLogonTableBody"></tbody>
@@ -793,6 +924,7 @@ def _dashboard_html() -> str:
       </div>
     </div>
   </dialog>
+  <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
 
   <script>
     const configUrl = {json.dumps(config_url)};
@@ -805,6 +937,198 @@ def _dashboard_html() -> str:
     const memoryDocumentUrl = {json.dumps(HTTP_DASHBOARD_MEMORY_DOCUMENT_PATH)};
     const playwrightStatusUrl = {json.dumps(HTTP_DASHBOARD_PLAYWRIGHT_STATUS_PATH)};
     const playwrightInstallUrl = {json.dumps(HTTP_DASHBOARD_PLAYWRIGHT_INSTALL_PATH)};
+    const languageStorageKey = "abapMcpDashboardLanguage";
+    const supportedLanguages = ["es", "en"];
+    const translations = {{
+      es: {{
+        "hero.subtitle": 'Gestiona las conexiones SAP configuradas en el archivo <code>.env</code> sin editarlo a mano.',
+        "language.label": "Idioma",
+        "tabs.aria": "Secciones del dashboard",
+        "mcp.title": "Clientes MCP",
+        "mcp.description": "Comprueba si el servidor ABAP MCP está registrado en cada cliente local.",
+        "mcp.client": "Cliente",
+        "mcp.file": "Fichero",
+        "common.actions": "Acciones",
+        "common.action": "Acción",
+        "common.refresh": "Actualizar",
+        "common.close": "Cerrar",
+        "common.saveChanges": "Guardar cambios",
+        "common.yes": "Sí",
+        "common.no": "No",
+        "common.edit": "Editar",
+        "common.delete": "Eliminar",
+        "common.insert": "Insertar",
+        "common.adjust": "Ajustar",
+        "common.use": "Usar",
+        "common.installed": "Instalado",
+        "common.notDetected": "No detectado",
+        "playwright.description": "Requerido para las tools de SAP WebGUI. Necesita el paquete Python y el navegador Chromium.",
+        "playwright.component": "Componente",
+        "playwright.status": "Estado",
+        "playwright.chromium": "Navegador Chromium",
+        "playwright.notInstalled": "No instalado",
+        "playwright.checking": "Comprobando...",
+        "playwright.packageMissing": "El paquete playwright no está instalado. Ejecuta: pip install playwright",
+        "playwright.running": "Ejecutando: {{label}}\\nEspera, esto puede tardar unos minutos...",
+        "playwright.runningToast": "Ejecutando {{label}}...",
+        "playwright.noOutput": "Sin salida.",
+        "playwright.failed": "La instalación de Playwright no se completó correctamente.",
+        "playwright.completed": "Completado.",
+        "playwright.completedToast": "Instalación de Playwright completada.",
+        "playwright.errorCheck": "Error al comprobar Playwright.",
+        "playwright.errorRun": "Error al ejecutar la instalación de Playwright.",
+        "env.saplogonPath": 'Ruta de <code>saplogon.exe</code>',
+        "env.saplogonPlaceholder": "Opcional. Si está vacío, el servidor intentará encontrar SAP GUI por PATH o rutas habituales.",
+        "env.connections": "Conexiones SAP",
+        "env.addConnection": "Añadir conexión",
+        "env.saveConnection": "Guardar conexión",
+        "env.noSystems": "No hay conexiones configuradas.",
+        "env.connectionDeleted": "Conexión eliminada de la lista. Falta guardar para persistir el cambio.",
+        "env.connectionReady": "Conexión preparada. Falta guardar para persistir el cambio.",
+        "env.saveDirty": "Hay cambios pendientes de guardar.",
+        "env.saveClean": "No hay cambios pendientes.",
+        "env.addDialog": "Añadir conexión SAP",
+        "env.editDialog": "Editar conexión SAP",
+        "field.name": "Nombre",
+        "field.type": "Tipo",
+        "field.server": "Servidor",
+        "field.client": "Cliente",
+        "field.language": "Idioma",
+        "field.user": "Usuario",
+        "field.sapGuiEntry": "Entrada de SAP GUI",
+        "field.sapGuiEntryPlaceholder": "Nombre exacto en SAP Logon",
+        "field.webguiPlaceholder": "https://servidor:puerto/sap/bc/gui/sap/its/webgui",
+        "field.verifySsl": "Verificar certificados SSL",
+        "field.port": "Puerto",
+        "memory.description": 'Explora los documentos locales de conocimiento almacenados en <code>db/documents</code>.',
+        "memory.filterPlaceholder": "Filtrar documentos y carpetas...",
+        "memory.document": "Documento",
+        "memory.selectFile": "Selecciona un fichero .md o .pdf",
+        "memory.placeholder": "Selecciona un documento del árbol para verlo aquí.",
+        "memory.noMatches": "No hay documentos .md o .pdf que coincidan con el filtro.",
+        "memory.folderFallback": "(carpeta)",
+        "memory.fileFallback": "(fichero)",
+        "memory.loadTreeError": "No se pudo cargar el árbol de memoria.",
+        "memory.openError": "No se pudo abrir el documento de memoria.",
+        "saplogon.import": "Importar desde SAP Logon",
+        "saplogon.helpTitle": "Abrir ayuda para localizar el puerto HTTPS en SAP GUI",
+        "saplogon.entries": "Entradas de SAP Logon",
+        "saplogon.description": "Selecciona una entrada. El dashboard rellenará el nombre de conexión y, si lo has indicado, intentará abrir SAP GUI para localizar automáticamente el puerto HTTPS en SMICM.",
+        "saplogon.noEntries": "No se han encontrado entradas de SAP Logon.",
+        "saplogon.loadError": "No se pudieron cargar las entradas de SAP Logon.",
+        "saplogon.basicApplied": "Importación básica aplicada desde SAP Logon. La búsqueda automática del puerto se ha omitido.",
+        "saplogon.searchingPort": "Buscando el puerto HTTPS en SAP GUI...",
+        "saplogon.autoImportSuccess": "Importación completada con autodetección del puerto HTTPS.",
+        "saplogon.autoImportError": "No se pudo descubrir el puerto HTTPS automáticamente. Usa la ayuda manual.",
+        "saplogon.confirmAutomation": "¿Quieres lanzar la automatización que intenta encontrar el puerto HTTPS de tu sistema SAP?",
+        "saplogon.credentialsRequired": "Rellena usuario y password en la conexión y vuelve a lanzar la importación desde SAP Logon.",
+        "config.loading": "Cargando configuración...",
+        "config.loaded": "Configuración cargada.",
+        "config.loadError": "No se pudo cargar la configuración.",
+        "config.saving": "Guardando configuración...",
+        "config.saved": "Configuración guardada.",
+        "config.saveError": "No se pudo guardar la configuración.",
+        "mcp.noData": "No hay datos de clientes MCP.",
+        "mcp.loadError": "No se pudo cargar el estado MCP.",
+        "mcp.actionApplied": "Acción MCP aplicada.",
+        "mcp.actionError": "No se pudo aplicar la acción MCP.",
+        "toast.close": "Cerrar mensaje",
+      }},
+      en: {{
+        "hero.subtitle": 'Manage SAP connections configured in the <code>.env</code> file without editing it by hand.',
+        "language.label": "Language",
+        "tabs.aria": "Dashboard sections",
+        "mcp.title": "MCP clients",
+        "mcp.description": "Check whether the ABAP MCP server is registered in each local client.",
+        "mcp.client": "Client",
+        "mcp.file": "File",
+        "common.actions": "Actions",
+        "common.action": "Action",
+        "common.refresh": "Refresh",
+        "common.close": "Close",
+        "common.saveChanges": "Save changes",
+        "common.yes": "Yes",
+        "common.no": "No",
+        "common.edit": "Edit",
+        "common.delete": "Delete",
+        "common.insert": "Insert",
+        "common.adjust": "Adjust",
+        "common.use": "Use",
+        "common.installed": "Installed",
+        "common.notDetected": "Not detected",
+        "playwright.description": "Required by the SAP WebGUI tools. Needs the Python package and the Chromium browser.",
+        "playwright.component": "Component",
+        "playwright.status": "Status",
+        "playwright.chromium": "Chromium browser",
+        "playwright.notInstalled": "Not installed",
+        "playwright.checking": "Checking...",
+        "playwright.packageMissing": "The playwright package is not installed. Run: pip install playwright",
+        "playwright.running": "Running: {{label}}\\nPlease wait, this may take a few minutes...",
+        "playwright.runningToast": "Running {{label}}...",
+        "playwright.noOutput": "No output.",
+        "playwright.failed": "The Playwright installation did not complete successfully.",
+        "playwright.completed": "Completed.",
+        "playwright.completedToast": "Playwright installation completed.",
+        "playwright.errorCheck": "Failed to check Playwright.",
+        "playwright.errorRun": "Failed to run the Playwright installation.",
+        "env.saplogonPath": '<code>saplogon.exe</code> path',
+        "env.saplogonPlaceholder": "Optional. If empty, the server will try PATH and common locations.",
+        "env.connections": "SAP connections",
+        "env.addConnection": "Add connection",
+        "env.saveConnection": "Save connection",
+        "env.noSystems": "No connections configured.",
+        "env.connectionDeleted": "Connection removed from the list. Save changes to persist it.",
+        "env.connectionReady": "Connection prepared. Save changes to persist it.",
+        "env.saveDirty": "There are unsaved changes.",
+        "env.saveClean": "No unsaved changes.",
+        "env.addDialog": "Add SAP connection",
+        "env.editDialog": "Edit SAP connection",
+        "field.name": "Name",
+        "field.type": "Type",
+        "field.server": "Server",
+        "field.client": "Client",
+        "field.language": "Language",
+        "field.user": "User",
+        "field.sapGuiEntry": "SAP GUI entry",
+        "field.sapGuiEntryPlaceholder": "Exact name in SAP Logon",
+        "field.webguiPlaceholder": "https://server:port/sap/bc/gui/sap/its/webgui",
+        "field.verifySsl": "Verify SSL certificates",
+        "field.port": "Port",
+        "memory.description": 'Browse local knowledge documents stored in <code>db/documents</code>.',
+        "memory.filterPlaceholder": "Filter documents and folders...",
+        "memory.document": "Document",
+        "memory.selectFile": "Select an .md or .pdf file",
+        "memory.placeholder": "Select a document from the tree to view it here.",
+        "memory.noMatches": "No .md or .pdf documents match the filter.",
+        "memory.folderFallback": "(folder)",
+        "memory.fileFallback": "(file)",
+        "memory.loadTreeError": "Failed to load the memory tree.",
+        "memory.openError": "Failed to open the memory document.",
+        "saplogon.import": "Import from SAP Logon",
+        "saplogon.helpTitle": "Open help for locating the HTTPS port in SAP GUI",
+        "saplogon.entries": "SAP Logon entries",
+        "saplogon.description": "Select an entry. The dashboard will fill the connection name and, if requested, try to open SAP GUI to automatically locate the HTTPS port in SMICM.",
+        "saplogon.noEntries": "No SAP Logon entries were found.",
+        "saplogon.loadError": "Failed to load SAP Logon entries.",
+        "saplogon.basicApplied": "Basic import applied from SAP Logon. Automatic port discovery was skipped.",
+        "saplogon.searchingPort": "Searching for the HTTPS port in SAP GUI...",
+        "saplogon.autoImportSuccess": "Import completed with automatic HTTPS port detection.",
+        "saplogon.autoImportError": "Could not discover the HTTPS port automatically. Use the manual help.",
+        "saplogon.confirmAutomation": "Do you want to run the automation that tries to find the HTTPS port of your SAP system?",
+        "saplogon.credentialsRequired": "Fill in user and password in the connection, then run the SAP Logon import again.",
+        "config.loading": "Loading configuration...",
+        "config.loaded": "Configuration loaded.",
+        "config.loadError": "Failed to load configuration.",
+        "config.saving": "Saving configuration...",
+        "config.saved": "Configuration saved.",
+        "config.saveError": "Failed to save configuration.",
+        "mcp.noData": "No MCP client data.",
+        "mcp.loadError": "Failed to load MCP status.",
+        "mcp.actionApplied": "MCP action applied.",
+        "mcp.actionError": "Failed to apply the MCP action.",
+        "toast.close": "Close message",
+      }},
+    }};
     const systems = [];
     const mcpClients = [];
     let sapLogonEntries = [];
@@ -813,11 +1137,18 @@ def _dashboard_html() -> str:
     let sapLogonImportMode = "auto";
     let editingIndex = null;
     let activeTab = "mcp";
+    let savedEnvSnapshot = "";
+    let lastPlaywrightStatus = null;
+    let currentLanguage = supportedLanguages.includes(localStorage.getItem(languageStorageKey))
+      ? localStorage.getItem(languageStorageKey)
+      : "es";
 
-    const statusEl = document.getElementById("status");
+    const toastRegion = document.getElementById("toastRegion");
+    const languageSelect = document.getElementById("languageSelect");
     const tableBody = document.getElementById("systemsTableBody");
     const mcpClientsTableBody = document.getElementById("mcpClientsTableBody");
     const sapGuiExecutablePathInput = document.getElementById("sapGuiExecutablePath");
+    const saveDirtyDot = document.getElementById("saveDirtyDot");
     const editorDialog = document.getElementById("editorDialog");
     const sapLogonDialog = document.getElementById("sapLogonDialog");
     const sapLogonTableBody = document.getElementById("sapLogonTableBody");
@@ -835,6 +1166,63 @@ def _dashboard_html() -> str:
       memory: document.getElementById("tabPanelMemory"),
     }};
 
+    function t(key, params = {{}}) {{
+      let text = (translations[currentLanguage] && translations[currentLanguage][key])
+        || (translations.es && translations.es[key])
+        || key;
+      Object.entries(params).forEach(([name, value]) => {{
+        text = text.replaceAll("{{{{" + name + "}}}}", String(value));
+        text = text.replaceAll("{{" + name + "}}", String(value));
+      }});
+      return text;
+    }}
+
+    function apiUrl(url) {{
+      const separator = url.includes("?") ? "&" : "?";
+      return `${{url}}${{separator}}lang=${{encodeURIComponent(currentLanguage)}}`;
+    }}
+
+    function applyTranslations() {{
+      document.documentElement.lang = currentLanguage;
+      languageSelect.value = currentLanguage;
+      document.querySelectorAll("[data-i18n]").forEach((node) => {{
+        node.innerHTML = t(node.dataset.i18n);
+      }});
+      document.querySelectorAll("[data-i18n-placeholder]").forEach((node) => {{
+        node.setAttribute("placeholder", t(node.dataset.i18nPlaceholder));
+      }});
+      document.querySelectorAll("[data-i18n-title]").forEach((node) => {{
+        node.setAttribute("title", t(node.dataset.i18nTitle));
+      }});
+      document.querySelectorAll("[data-i18n-aria-label]").forEach((node) => {{
+        node.setAttribute("aria-label", t(node.dataset.i18nAriaLabel));
+      }});
+      renderSystems();
+      renderMcpClients();
+      if (lastPlaywrightStatus) {{
+        renderPlaywrightStatus(lastPlaywrightStatus);
+      }}
+      renderMemoryTree();
+      renderSapLogonEntries();
+      if (!selectedMemoryPath) {{
+        showMemoryPlaceholder();
+      }}
+      if (editorDialog.open) {{
+        dialogTitle.textContent = editingIndex === null ? t("env.addDialog") : t("env.editDialog");
+      }}
+      updateSaveDirtyState();
+    }}
+
+    function setLanguage(language) {{
+      currentLanguage = supportedLanguages.includes(language) ? language : "es";
+      localStorage.setItem(languageStorageKey, currentLanguage);
+      applyTranslations();
+      loadMcpClients().catch((error) => {{
+        console.error(error);
+        showToast(error.message || t("mcp.loadError"), "error");
+      }});
+    }}
+
     function setActiveTab(tabName) {{
       activeTab = tabName;
       tabButtons.forEach((button) => {{
@@ -851,7 +1239,7 @@ def _dashboard_html() -> str:
       tableBody.innerHTML = "";
       if (!systems.length) {{
         const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="9" style="color:#66604f;">No hay conexiones configuradas.</td>';
+        row.innerHTML = `<td colspan="10" style="color:#66604f;">${{escapeHtml(t("env.noSystems"))}}</td>`;
         tableBody.appendChild(row);
         return;
       }}
@@ -865,13 +1253,13 @@ def _dashboard_html() -> str:
           <td>${{escapeHtml(system.server || "")}}</td>
           <td>${{escapeHtml(system.client || "")}}</td>
           <td>${{escapeHtml(system.language || "")}}</td>
-          <td>${{system.verify_ssl ? "Sí" : "No"}}</td>
+          <td>${{system.verify_ssl ? t("common.yes") : t("common.no")}}</td>
           <td>${{escapeHtml(system.sap_gui_connection_name || "")}}</td>
           <td>${{escapeHtml(system.sap_webgui_url || "")}}</td>
           <td>
             <div class="inline-actions">
-              <button class="button secondary" type="button" data-action="edit" data-index="${{index}}">Editar</button>
-              <button class="button danger" type="button" data-action="delete" data-index="${{index}}">Eliminar</button>
+              <button class="button secondary" type="button" data-action="edit" data-index="${{index}}">${{t("common.edit")}}</button>
+              <button class="button danger" type="button" data-action="delete" data-index="${{index}}">${{t("common.delete")}}</button>
             </div>
           </td>
         `;
@@ -883,7 +1271,7 @@ def _dashboard_html() -> str:
       mcpClientsTableBody.innerHTML = "";
       if (!mcpClients.length) {{
         const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="6" class="subtle">No hay datos de clientes MCP.</td>';
+        row.innerHTML = `<td colspan="6" class="subtle">${{escapeHtml(t("mcp.noData"))}}</td>`;
         mcpClientsTableBody.appendChild(row);
         return;
       }}
@@ -893,12 +1281,12 @@ def _dashboard_html() -> str:
         const cliClass = client.cliInstalled ? "ok" : "off";
         const mcpClass = client.mcpState === "match" ? "ok" : (client.mcpState === "mismatch" ? "warn" : "off");
         const actions = (client.actions || []).map((action) => {{
-          const label = action === "insert" ? "Insertar" : (action === "adjust" ? "Ajustar" : "Eliminar");
+          const label = action === "insert" ? t("common.insert") : (action === "adjust" ? t("common.adjust") : t("common.delete"));
           const buttonClass = action === "delete" ? "danger" : (action === "adjust" ? "warning" : "secondary");
           return `<button class="button ${{buttonClass}}" type="button" data-mcp-action="${{action}}" data-client-id="${{client.id}}">${{label}}</button>`;
         }}).join("");
         row.innerHTML = `
-          <td><span class="signal" title="${{escapeHtml(client.cliDetail || "")}}"><span class="signal-dot ${{cliClass}}"></span>${{client.cliInstalled ? "Instalado" : "No detectado"}}</span></td>
+          <td><span class="signal" title="${{escapeHtml(client.cliDetail || "")}}"><span class="signal-dot ${{cliClass}}"></span>${{client.cliInstalled ? t("common.installed") : t("common.notDetected")}}</span></td>
           <td><strong>${{escapeHtml(client.name || "")}}</strong></td>
           <td><code>${{escapeHtml(client.path || "")}}</code></td>
           <td><span class="signal"><span class="signal-dot ${{mcpClass}}"></span>${{escapeHtml(client.mcpLabel || "")}}</span></td>
@@ -918,30 +1306,99 @@ def _dashboard_html() -> str:
         .replaceAll("'", "&#39;");
     }}
 
-    function setStatus(text, isError = false) {{
-      statusEl.textContent = text;
-      statusEl.style.color = isError ? "var(--danger)" : "var(--accent)";
+    function showToast(message, type = "info", options = {{}}) {{
+      placeToastRegion();
+      const normalizedType = ["info", "success", "warning", "error"].includes(type) ? type : "info";
+      const toast = document.createElement("div");
+      toast.className = `toast ${{normalizedType}}`;
+      toast.setAttribute("role", normalizedType === "error" ? "alert" : "status");
+      const messageEl = document.createElement("div");
+      messageEl.className = "toast-message";
+      messageEl.textContent = message || "";
+      const closeButton = document.createElement("button");
+      closeButton.className = "toast-close";
+      closeButton.type = "button";
+      closeButton.setAttribute("aria-label", t("toast.close"));
+      closeButton.textContent = "x";
+      toast.appendChild(messageEl);
+      toast.appendChild(closeButton);
+      toastRegion.prepend(toast);
+
+      while (toastRegion.children.length > 4) {{
+        toastRegion.lastElementChild.remove();
+      }}
+
+      const removeToast = () => {{
+        if (toast.isConnected) {{
+          toast.remove();
+        }}
+      }};
+      closeButton.addEventListener("click", removeToast);
+      const duration = Number(options.durationMs || (normalizedType === "error" ? 8000 : 5000));
+      if (duration > 0) {{
+        window.setTimeout(removeToast, duration);
+      }}
+    }}
+
+    function placeToastRegion() {{
+      const openDialogs = Array.from(document.querySelectorAll("dialog[open]"));
+      const host = openDialogs.length ? openDialogs[openDialogs.length - 1] : document.body;
+      if (toastRegion.parentElement !== host) {{
+        host.appendChild(toastRegion);
+      }}
+    }}
+
+    function normalizedEnvState() {{
+      return JSON.stringify({{
+        sapGuiExecutablePath: sapGuiExecutablePathInput.value.trim(),
+        systems: systems.map((system) => ({{
+          id: system.id || "",
+          name: system.name || "",
+          type: system.type || "",
+          server: system.server || "",
+          user: system.user || "",
+          password: system.password || "",
+          client: system.client || "",
+          language: system.language || "",
+          verify_ssl: Boolean(system.verify_ssl),
+          sap_gui_connection_name: system.sap_gui_connection_name || "",
+          sap_webgui_url: system.sap_webgui_url || "",
+        }})),
+      }});
+    }}
+
+    function updateSaveDirtyState() {{
+      const hasChanges = normalizedEnvState() !== savedEnvSnapshot;
+      saveDirtyDot.classList.toggle("ok", !hasChanges);
+      saveDirtyDot.classList.toggle("off", hasChanges);
+      saveDirtyDot.title = hasChanges ? t("env.saveDirty") : t("env.saveClean");
+    }}
+
+    function captureSavedEnvSnapshot() {{
+      savedEnvSnapshot = normalizedEnvState();
+      updateSaveDirtyState();
     }}
 
     async function loadConfig() {{
-      setStatus("Cargando configuración...");
-      const response = await fetch(configUrl, {{ credentials: "same-origin" }});
+      showToast(t("config.loading"), "info");
+      const response = await fetch(apiUrl(configUrl), {{ credentials: "same-origin" }});
       const payload = await response.json();
       if (!response.ok) {{
-        throw new Error(payload.message || "No se pudo cargar la configuración.");
+        throw new Error(payload.message || t("config.loadError"));
       }}
       sapGuiExecutablePathInput.value = payload.sapGuiExecutablePath || "";
       systems.length = 0;
       (payload.systems || []).forEach((system) => systems.push(system));
       renderSystems();
-      setStatus("Configuración cargada.");
+      captureSavedEnvSnapshot();
+      showToast(t("config.loaded"), "success");
     }}
 
     async function loadMcpClients() {{
-      const response = await fetch(mcpStatusUrl, {{ credentials: "same-origin" }});
+      const response = await fetch(apiUrl(mcpStatusUrl), {{ credentials: "same-origin" }});
       const payload = await response.json();
       if (!response.ok) {{
-        throw new Error(payload.message || "No se pudo cargar el estado MCP.");
+        throw new Error(payload.message || t("mcp.loadError"));
       }}
       mcpClients.length = 0;
       (payload.clients || []).forEach((client) => mcpClients.push(client));
@@ -950,19 +1407,20 @@ def _dashboard_html() -> str:
 
     function renderPlaywrightStatus(status) {{
       const tbody = document.getElementById("playwrightTableBody");
+      lastPlaywrightStatus = status;
       tbody.innerHTML = "";
       const installed = status.browserInstalled;
       const disabled = !status.packageInstalled;
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td>Navegador Chromium</td>
-        <td><span class="signal"><span class="signal-dot ${{installed ? "ok" : "off"}}"></span>${{installed ? "Instalado" : "No instalado"}}</span></td>
+        <td>${{t("playwright.chromium")}}</td>
+        <td><span class="signal"><span class="signal-dot ${{installed ? "ok" : "off"}}"></span>${{installed ? t("common.installed") : t("playwright.notInstalled")}}</span></td>
         <td>
           <button class="button secondary" type="button"
             data-playwright-action="browser"
             ${{installed || disabled ? "disabled" : ""}}
-            title="${{disabled ? 'El paquete playwright no está instalado. Ejecuta: pip install playwright' : ''}}">
-            ${{installed ? "Instalado" : "playwright install chromium"}}
+            title="${{disabled ? t("playwright.packageMissing") : ""}}">
+            ${{installed ? t("common.installed") : "playwright install chromium"}}
           </button>
         </td>
       `;
@@ -971,11 +1429,11 @@ def _dashboard_html() -> str:
 
     async function loadPlaywrightStatus() {{
       const tbody = document.getElementById("playwrightTableBody");
-      tbody.innerHTML = '<tr><td colspan="3" class="subtle">Comprobando...</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="3" class="subtle">${{escapeHtml(t("playwright.checking"))}}</td></tr>`;
       try {{
-        const response = await fetch(playwrightStatusUrl, {{ credentials: "same-origin" }});
+        const response = await fetch(apiUrl(playwrightStatusUrl), {{ credentials: "same-origin" }});
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.message || "Error al comprobar Playwright.");
+        if (!response.ok) throw new Error(payload.message || t("playwright.errorCheck"));
         renderPlaywrightStatus(payload);
       }} catch (err) {{
         tbody.innerHTML = `<tr><td colspan="3" style="color:var(--danger);">${{err.message}}</td></tr>`;
@@ -988,7 +1446,8 @@ def _dashboard_html() -> str:
       const label = action === "package" ? "pip install playwright" : "playwright install chromium";
 
       log.style.display = "block";
-      log.textContent = `Ejecutando: ${{label}}\nEspera, esto puede tardar unos minutos...`;
+      log.textContent = t("playwright.running", {{ label }});
+      showToast(t("playwright.runningToast", {{ label }}), "info");
       tbody.querySelectorAll("button[data-playwright-action]").forEach((b) => b.disabled = true);
 
       try {{
@@ -996,28 +1455,31 @@ def _dashboard_html() -> str:
           method: "POST",
           credentials: "same-origin",
           headers: {{ "Content-Type": "application/json" }},
-          body: JSON.stringify({{ action }}),
+          body: JSON.stringify({{ action, language: currentLanguage }}),
         }});
         const payload = await response.json();
-        log.textContent = (payload.output || "").trim() || (payload.message || "Sin salida.");
+        log.textContent = (payload.output || "").trim() || (payload.message || t("playwright.noOutput"));
         if (!response.ok || !payload.success) {{
           log.style.color = "var(--danger)";
+          showToast(payload.message || t("playwright.failed"), "error");
         }} else {{
           log.style.color = "var(--accent)";
-          log.textContent += "\\n\\nCompletado.";
+          log.textContent += `\\n\\n${{t("playwright.completed")}}`;
+          showToast(t("playwright.completedToast"), "success");
         }}
       }} catch (err) {{
         log.textContent = `Error: ${{err.message}}`;
         log.style.color = "var(--danger)";
+        showToast(err.message || t("playwright.errorRun"), "error");
       }}
       await loadPlaywrightStatus();
     }}
 
     async function loadMemoryTree() {{
-      const response = await fetch(memoryTreeUrl, {{ credentials: "same-origin" }});
+      const response = await fetch(apiUrl(memoryTreeUrl), {{ credentials: "same-origin" }});
       const payload = await response.json();
       if (!response.ok) {{
-        throw new Error(payload.message || "No se pudo cargar el árbol de memoria.");
+        throw new Error(payload.message || t("memory.loadTreeError"));
       }}
       memoryNodes = payload.nodes || [];
       renderMemoryTree();
@@ -1050,7 +1512,7 @@ def _dashboard_html() -> str:
         const wrapper = document.createElement("details");
         wrapper.open = forceOpen;
         const summary = document.createElement("summary");
-        summary.textContent = node.name || "(carpeta)";
+        summary.textContent = node.name || t("memory.folderFallback");
         wrapper.appendChild(summary);
 
         const children = document.createElement("div");
@@ -1067,7 +1529,7 @@ def _dashboard_html() -> str:
         button.classList.add("active");
       }}
       button.dataset.memoryPath = node.relativePath || "";
-      button.innerHTML = `${{escapeHtml(node.name || "(fichero)")}}<span class="file-meta">${{escapeHtml(node.extension || "")}}</span>`;
+      button.innerHTML = `${{escapeHtml(node.name || t("memory.fileFallback"))}}<span class="file-meta">${{escapeHtml(node.extension || "")}}</span>`;
       return button;
     }}
 
@@ -1075,16 +1537,16 @@ def _dashboard_html() -> str:
       const filtered = filterMemoryNodes(memoryNodes, memoryFilterInput.value || "");
       memoryTreeEl.innerHTML = "";
       if (!filtered.length) {{
-        memoryTreeEl.innerHTML = '<div class="subtle">No hay documentos .md o .pdf que coincidan con el filtro.</div>';
+        memoryTreeEl.innerHTML = `<div class="subtle">${{escapeHtml(t("memory.noMatches"))}}</div>`;
         return;
       }}
       filtered.forEach((node) => memoryTreeEl.appendChild(renderMemoryNode(node, Boolean((memoryFilterInput.value || "").trim()))));
     }}
 
     function showMemoryPlaceholder() {{
-      memoryViewerTitleEl.textContent = "Documento";
-      memoryViewerMetaEl.textContent = "Selecciona un fichero .md o .pdf";
-      memoryViewerEl.innerHTML = '<div class="viewer-placeholder">Selecciona un documento del árbol para verlo aquí.</div>';
+      memoryViewerTitleEl.textContent = t("memory.document");
+      memoryViewerMetaEl.textContent = t("memory.selectFile");
+      memoryViewerEl.innerHTML = `<div class="viewer-placeholder">${{escapeHtml(t("memory.placeholder"))}}</div>`;
     }}
 
     async function openMemoryDocument(relativePath) {{
@@ -1095,14 +1557,14 @@ def _dashboard_html() -> str:
       memoryViewerMetaEl.textContent = relativePath;
 
       if (extension === "pdf") {{
-        memoryViewerEl.innerHTML = `<iframe class="viewer-frame" src="${{memoryDocumentUrl}}?relativePath=${{encodeURIComponent(relativePath)}}"></iframe>`;
+        memoryViewerEl.innerHTML = `<iframe class="viewer-frame" src="${{apiUrl(memoryDocumentUrl)}}&relativePath=${{encodeURIComponent(relativePath)}}"></iframe>`;
         return;
       }}
 
-      const response = await fetch(`${{memoryDocumentUrl}}?relativePath=${{encodeURIComponent(relativePath)}}`, {{ credentials: "same-origin" }});
+      const response = await fetch(`${{apiUrl(memoryDocumentUrl)}}&relativePath=${{encodeURIComponent(relativePath)}}`, {{ credentials: "same-origin" }});
       const payload = await response.json();
       if (!response.ok) {{
-        throw new Error(payload.message || "No se pudo abrir el documento de memoria.");
+        throw new Error(payload.message || t("memory.openError"));
       }}
       memoryViewerEl.innerHTML = `<div class="markdown-view">${{escapeHtml(payload.content || "")}}</div>`;
     }}
@@ -1116,15 +1578,16 @@ def _dashboard_html() -> str:
         }},
         body: JSON.stringify({{
           clientId,
-          action
+          action,
+          language: currentLanguage,
         }})
       }});
       const payload = await response.json();
       if (!response.ok) {{
-        throw new Error(payload.message || "No se pudo aplicar la acción MCP.");
+        throw new Error(payload.message || t("mcp.actionError"));
       }}
       await loadMcpClients();
-      setStatus(payload.message || "Acción MCP aplicada.");
+      showToast(payload.message || t("mcp.actionApplied"), "success");
     }}
 
     function openEditor(index) {{
@@ -1133,7 +1596,7 @@ def _dashboard_html() -> str:
         ? {{ id: "", name: "", type: "", server: "", user: "", password: "", client: "", language: "EN", verify_ssl: false, sap_gui_connection_name: "", sap_webgui_url: "" }}
         : systems[index];
 
-      dialogTitle.textContent = index === null ? "Añadir conexión SAP" : "Editar conexión SAP";
+      dialogTitle.textContent = index === null ? t("env.addDialog") : t("env.editDialog");
       document.getElementById("systemId").value = source.id || "";
       document.getElementById("systemName").value = source.name || "";
       document.getElementById("systemType").value = source.type || "";
@@ -1152,7 +1615,7 @@ def _dashboard_html() -> str:
       sapLogonTableBody.innerHTML = "";
       if (!sapLogonEntries.length) {{
         const row = document.createElement("tr");
-        row.innerHTML = '<td colspan="5" style="color:#66604f;">No se han encontrado entradas de SAP Logon.</td>';
+        row.innerHTML = `<td colspan="5" style="color:#66604f;">${{escapeHtml(t("saplogon.noEntries"))}}</td>`;
         sapLogonTableBody.appendChild(row);
         return;
       }}
@@ -1164,17 +1627,17 @@ def _dashboard_html() -> str:
           <td>${{escapeHtml(entry.systemId || "")}}</td>
           <td>${{escapeHtml(entry.host || "")}}</td>
           <td>${{escapeHtml(entry.port || "")}}</td>
-          <td><button class="button secondary" type="button" data-import-index="${{index}}">Usar</button></td>
+          <td><button class="button secondary" type="button" data-import-index="${{index}}">${{t("common.use")}}</button></td>
         `;
         sapLogonTableBody.appendChild(row);
       }});
     }}
 
     async function loadSapLogonEntries() {{
-      const response = await fetch(sapLogonUrl, {{ credentials: "same-origin" }});
+      const response = await fetch(apiUrl(sapLogonUrl), {{ credentials: "same-origin" }});
       const payload = await response.json();
       if (!response.ok) {{
-        throw new Error(payload.message || "No se pudieron cargar las entradas de SAP Logon.");
+        throw new Error(payload.message || t("saplogon.loadError"));
       }}
       sapLogonEntries = payload.entries || [];
       renderSapLogonEntries();
@@ -1194,11 +1657,11 @@ def _dashboard_html() -> str:
       const userValue = document.getElementById("systemUser").value.trim();
       const passwordValue = document.getElementById("systemPassword").value;
       if (sapLogonImportMode !== "auto") {{
-        setStatus("Importación básica aplicada desde SAP Logon. La búsqueda automática del puerto se ha omitido porque faltan usuario/password.");
+        showToast(t("saplogon.basicApplied"), "success");
         return;
       }}
 
-      setStatus("Buscando el puerto HTTPS en SAP GUI...");
+      showToast(t("saplogon.searchingPort"), "info");
       try {{
         const response = await fetch(sapLogonImportUrl, {{
           method: "POST",
@@ -1213,29 +1676,31 @@ def _dashboard_html() -> str:
             client: document.getElementById("systemClient").value.trim(),
             user: userValue,
             password: passwordValue,
-            language: document.getElementById("systemLanguage").value.trim() || "EN"
+            language: currentLanguage,
+            sapLanguage: document.getElementById("systemLanguage").value.trim() || "EN"
           }})
         }});
         const payload = await response.json();
         if (!response.ok) {{
-          throw new Error(payload.message || "No se pudo descubrir el puerto HTTPS automáticamente.");
+          throw new Error(payload.message || t("saplogon.autoImportError"));
         }}
         document.getElementById("systemServer").value = payload.server || document.getElementById("systemServer").value || "";
         document.getElementById("sapGuiConnectionName").value = payload.connectionName || document.getElementById("sapGuiConnectionName").value || "";
         if (payload.defaultClient && !document.getElementById("systemClient").value.trim()) {{
           document.getElementById("systemClient").value = payload.defaultClient;
         }}
-        setStatus(payload.message || "Importación completada con autodetección del puerto HTTPS.");
+        showToast(payload.message || t("saplogon.autoImportSuccess"), "success");
       }} catch (error) {{
         console.error(error);
-        setStatus(error.message || "No se pudo descubrir el puerto HTTPS automáticamente. Usa la ayuda manual.", true);
+        showToast(error.message || t("saplogon.autoImportError"), "error");
       }}
     }}
 
     function removeSystem(index) {{
       systems.splice(index, 1);
       renderSystems();
-      setStatus("Conexión eliminada de la lista. Falta guardar para persistir el cambio.");
+      updateSaveDirtyState();
+      showToast(t("env.connectionDeleted"), "warning");
     }}
 
     systemForm.addEventListener("submit", (event) => {{
@@ -1261,14 +1726,20 @@ def _dashboard_html() -> str:
       }}
       editorDialog.close();
       renderSystems();
-      setStatus("Conexión preparada. Falta guardar para persistir el cambio.");
+      updateSaveDirtyState();
+      showToast(t("env.connectionReady"), "success");
     }});
 
     document.getElementById("closeDialogButton").addEventListener("click", () => editorDialog.close());
     document.getElementById("closeSapLogonDialogButton").addEventListener("click", () => sapLogonDialog.close());
+    [editorDialog, sapLogonDialog].forEach((dialog) => {{
+      dialog.addEventListener("close", placeToastRegion);
+      dialog.addEventListener("cancel", placeToastRegion);
+    }});
     document.getElementById("addSystemButton").addEventListener("click", () => openEditor(null));
+    sapGuiExecutablePathInput.addEventListener("input", updateSaveDirtyState);
     document.getElementById("openPortHelpButton").addEventListener("click", () => {{
-      window.open(portHelpUrl, "_blank", "noopener,noreferrer");
+      window.open(apiUrl(portHelpUrl), "_blank", "noopener,noreferrer");
     }});
     tabButtons.forEach((button) => {{
       button.addEventListener("click", () => setActiveTab(button.dataset.tab));
@@ -1283,30 +1754,26 @@ def _dashboard_html() -> str:
         await openMemoryDocument(button.dataset.memoryPath || "");
       }} catch (error) {{
         console.error(error);
-        setStatus(error.message || "No se pudo abrir el documento de memoria.", true);
+        showToast(error.message || t("memory.openError"), "error");
       }}
     }});
     document.getElementById("importSapLogonButton").addEventListener("click", async () => {{
       try {{
+        const runAutomation = window.confirm(
+          t("saplogon.confirmAutomation")
+        );
         const userValue = document.getElementById("systemUser").value.trim();
         const passwordValue = document.getElementById("systemPassword").value;
-        sapLogonImportMode = "auto";
-        if (!userValue || !passwordValue) {{
-          const continueWithoutAuto = window.confirm(
-            "Sin usuario y password no se podrá hacer la búsqueda automática del puerto ni capturar el mandante por defecto. " +
-            "Pulsa Aceptar para continuar con una importación básica desde SAP Logon o Cancelar para volver y rellenar esos datos."
-          );
-          if (!continueWithoutAuto) {{
-            setStatus("Rellena usuario y password en la conexión y vuelve a lanzar la importación desde SAP Logon.", true);
-            return;
-          }}
-          sapLogonImportMode = "basic";
+        sapLogonImportMode = runAutomation ? "auto" : "basic";
+        if (runAutomation && (!userValue || !passwordValue)) {{
+          showToast(t("saplogon.credentialsRequired"), "error");
+          return;
         }}
         await loadSapLogonEntries();
         sapLogonDialog.showModal();
       }} catch (error) {{
         console.error(error);
-        setStatus(error.message || "No se pudieron cargar las entradas de SAP Logon.", true);
+        showToast(error.message || t("saplogon.loadError"), "error");
       }}
     }});
     tableBody.addEventListener("click", (event) => {{
@@ -1330,7 +1797,7 @@ def _dashboard_html() -> str:
         await runMcpAction(button.dataset.clientId, button.dataset.mcpAction);
       }} catch (error) {{
         console.error(error);
-        setStatus(error.message || "No se pudo aplicar la acción MCP.", true);
+        showToast(error.message || t("mcp.actionError"), "error");
       }}
     }});
     sapLogonTableBody.addEventListener("click", async (event) => {{
@@ -1342,7 +1809,7 @@ def _dashboard_html() -> str:
     }});
 
     document.getElementById("saveButton").addEventListener("click", async () => {{
-      setStatus("Guardando configuración...");
+      showToast(t("config.saving"), "info");
       const response = await fetch(configUrl, {{
         method: "POST",
         credentials: "same-origin",
@@ -1351,17 +1818,19 @@ def _dashboard_html() -> str:
         }},
         body: JSON.stringify({{
           sapGuiExecutablePath: sapGuiExecutablePathInput.value.trim(),
-          systems
+          systems,
+          language: currentLanguage,
         }})
       }});
 
       const payload = await response.json();
       if (!response.ok) {{
-        setStatus(payload.message || "No se pudo guardar la configuración.", true);
+        showToast(payload.message || t("config.saveError"), "error");
         return;
       }}
-      setStatus(payload.message || "Configuración guardada.");
+      showToast(payload.message || t("config.saved"), "success");
       await loadConfig();
+      updateSaveDirtyState();
     }});
 
     document.getElementById("refreshPlaywrightButton").addEventListener("click", loadPlaywrightStatus);
@@ -1370,19 +1839,78 @@ def _dashboard_html() -> str:
       if (!button || button.disabled) return;
       await installPlaywright(button.dataset.playwrightAction);
     }});
+    languageSelect.addEventListener("change", () => {{
+      setLanguage(languageSelect.value);
+    }});
 
+    applyTranslations();
     showMemoryPlaceholder();
     Promise.all([loadConfig(), loadMcpClients(), loadMemoryTree(), loadPlaywrightStatus()]).catch((error) => {{
       console.error(error);
-      setStatus(error.message || "No se pudo cargar la configuración.", true);
+      showToast(error.message || t("config.loadError"), "error");
     }});
   </script>
 </body>
 </html>"""
 
 
+_DASHBOARD_ROUTE_TEXT = {
+    "es": {
+        "load_config_failed": "No se pudo cargar la configuración del dashboard: {error}",
+        "load_mcp_failed": "No se pudo cargar el estado MCP: {error}",
+        "apply_mcp_failed": "No se pudo aplicar la acción MCP del dashboard: {error}",
+        "load_memory_tree_failed": "No se pudo cargar el árbol de memoria: {error}",
+        "load_memory_document_failed": "No se pudo cargar el documento de memoria: {error}",
+        "config_saved": "Configuración guardada.",
+        "save_config_failed": "No se pudo guardar la configuración del dashboard: {error}",
+        "load_saplogon_failed": "No se pudieron cargar las entradas de SAP Logon: {error}",
+        "port_detected": "Puerto {protocol} detectado automáticamente para {connection}: {server}",
+        "fallback_connection": ". Se ha utilizado la entrada SAP GUI '{connection}' porque la seleccionada no se podía abrir automáticamente.",
+        "default_client": ". Mandante detectado: {client}.",
+        "import_saplogon_failed": "No se pudo importar automáticamente la entrada de SAP Logon: {error}",
+        "check_playwright_failed": "No se pudo comprobar Playwright: {error}",
+        "unknown_playwright_action": "Acción desconocida '{action}'. Usa 'package' o 'browser'.",
+        "playwright_timeout": "El comando superó el tiempo límite de 5 minutos.",
+        "run_install_failed": "No se pudo ejecutar el comando de instalación: {error}",
+    },
+    "en": {
+        "load_config_failed": "Failed to load dashboard configuration: {error}",
+        "load_mcp_failed": "Failed to load MCP client status: {error}",
+        "apply_mcp_failed": "Failed to apply MCP dashboard action: {error}",
+        "load_memory_tree_failed": "Failed to load memory tree: {error}",
+        "load_memory_document_failed": "Failed to load memory document: {error}",
+        "config_saved": "Dashboard configuration saved successfully.",
+        "save_config_failed": "Failed to save dashboard configuration: {error}",
+        "load_saplogon_failed": "Failed to load SAP Logon entries: {error}",
+        "port_detected": "{protocol} port detected automatically for {connection}: {server}",
+        "fallback_connection": ". SAP GUI entry '{connection}' was used because the selected one could not be opened automatically.",
+        "default_client": ". Default client detected: {client}.",
+        "import_saplogon_failed": "Failed to import the SAP Logon entry automatically: {error}",
+        "check_playwright_failed": "Failed to check Playwright: {error}",
+        "unknown_playwright_action": "Unknown action '{action}'. Use 'package' or 'browser'.",
+        "playwright_timeout": "The command exceeded the 5 minute timeout.",
+        "run_install_failed": "Failed to run install command: {error}",
+    },
+}
+
+
+def _dashboard_lang(value: str | None) -> str:
+    return "en" if str(value or "").strip().lower() == "en" else "es"
+
+
+def _dashboard_request_lang(request) -> str:
+    return _dashboard_lang(request.query_params.get("lang"))
+
+
+def _dashboard_payload_lang(payload: dict) -> str:
+    return _dashboard_lang(payload.get("language"))
+
+
+def _route_text(lang: str, key: str, **kwargs) -> str:
+    return _DASHBOARD_ROUTE_TEXT[_dashboard_lang(lang)][key].format(**kwargs)
+
+
 mcp = FastMCP(name="ABAP Tools - MCP Server", version="1.0.0", lifespan=abap_lifespan)
-print("FastMCP server object created.")
 
 
 @mcp.custom_route(HTTP_DASHBOARD_PATH, methods=["GET"], include_in_schema=False)
@@ -1394,19 +1922,21 @@ async def dashboard_page(_request):
 @mcp.custom_route(HTTP_DASHBOARD_CONFIG_PATH, methods=["GET"], include_in_schema=False)
 async def dashboard_get_config(_request):
     """Return the dashboard-managed SAP configuration as JSON."""
+    lang = _dashboard_request_lang(_request)
     try:
         return JSONResponse(get_dashboard_config())
     except Exception as exc:
-        return JSONResponse({"message": f"Failed to load dashboard configuration: {str(exc)}"}, status_code=500)
+        return JSONResponse({"message": _route_text(lang, "load_config_failed", error=str(exc))}, status_code=500)
 
 
 @mcp.custom_route(HTTP_DASHBOARD_MCP_STATUS_PATH, methods=["GET"], include_in_schema=False)
 async def dashboard_get_mcp_status(_request):
     """Return the MCP client status table shown in the dashboard."""
+    lang = _dashboard_request_lang(_request)
     try:
-        return JSONResponse(dashboard_get_mcp_status_data())
+        return JSONResponse(dashboard_get_mcp_status_data(lang))
     except Exception as exc:
-        return JSONResponse({"message": f"Failed to load MCP client status: {str(exc)}"}, status_code=500)
+        return JSONResponse({"message": _route_text(lang, "load_mcp_failed", error=str(exc))}, status_code=500)
 
 
 @mcp.custom_route(HTTP_DASHBOARD_MCP_ACTION_PATH, methods=["POST"], include_in_schema=False)
@@ -1414,27 +1944,30 @@ async def dashboard_apply_mcp_action_route(request):
     """Insert, adjust or delete the ABAP MCP entry in one local client configuration."""
     try:
         payload = await request.json()
+        lang = _dashboard_payload_lang(payload)
         client_id = str(payload.get("clientId", "") or "").strip().lower()
         action = str(payload.get("action", "") or "").strip().lower()
-        return JSONResponse(dashboard_apply_mcp_action(client_id, action))
+        return JSONResponse(dashboard_apply_mcp_action(client_id, action, lang))
     except ValueError as exc:
         return JSONResponse({"message": str(exc)}, status_code=400)
     except Exception as exc:
-        return JSONResponse({"message": f"Failed to apply MCP dashboard action: {str(exc)}"}, status_code=500)
+        return JSONResponse({"message": _route_text(locals().get("lang", "es"), "apply_mcp_failed", error=str(exc))}, status_code=500)
 
 
 @mcp.custom_route(HTTP_DASHBOARD_MEMORY_TREE_PATH, methods=["GET"], include_in_schema=False)
 async def dashboard_get_memory_tree(_request):
     """Return the local documents tree shown in the dashboard memory tab."""
+    lang = _dashboard_request_lang(_request)
     try:
         return JSONResponse(_memory_tree_payload())
     except Exception as exc:
-        return JSONResponse({"message": f"Failed to load memory tree: {str(exc)}"}, status_code=500)
+        return JSONResponse({"message": _route_text(lang, "load_memory_tree_failed", error=str(exc))}, status_code=500)
 
 
 @mcp.custom_route(HTTP_DASHBOARD_MEMORY_DOCUMENT_PATH, methods=["GET"], include_in_schema=False)
 async def dashboard_get_memory_document(request):
     """Return one local memory document either as markdown JSON or as a PDF file response."""
+    lang = _dashboard_request_lang(request)
     try:
         relative_path = str(request.query_params.get("relativePath", "") or "").strip()
         _, target_path = _resolve_memory_relative_path(relative_path)
@@ -1448,13 +1981,13 @@ async def dashboard_get_memory_document(request):
     except FileNotFoundError as exc:
         return JSONResponse({"message": str(exc)}, status_code=404)
     except Exception as exc:
-        return JSONResponse({"message": f"Failed to load memory document: {str(exc)}"}, status_code=500)
+        return JSONResponse({"message": _route_text(lang, "load_memory_document_failed", error=str(exc))}, status_code=500)
 
 
 @mcp.custom_route(HTTP_DASHBOARD_PORT_HELP_PATH, methods=["GET"], include_in_schema=False)
 async def dashboard_port_help_page(_request):
     """Serve the SAP GUI tutorial showing how to find the HTTPS port in SMICM."""
-    return HTMLResponse(render_dashboard_port_help_html())
+    return HTMLResponse(render_dashboard_port_help_html(_dashboard_request_lang(_request)))
 
 
 @mcp.custom_route(HTTP_DASHBOARD_CONFIG_PATH, methods=["POST"], include_in_schema=False)
@@ -1462,23 +1995,25 @@ async def dashboard_save_config(request):
     """Persist the dashboard-managed SAP configuration back into the .env file."""
     try:
         payload = await request.json()
+        lang = _dashboard_payload_lang(payload)
         systems = payload.get("systems", [])
         sap_gui_executable_path = str(payload.get("sapGuiExecutablePath", "") or "")
         update_dashboard_config(systems, sap_gui_executable_path)
-        return JSONResponse({"message": "Dashboard configuration saved successfully."})
+        return JSONResponse({"message": _route_text(lang, "config_saved")})
     except ValueError as exc:
         return JSONResponse({"message": str(exc)}, status_code=400)
     except Exception as exc:
-        return JSONResponse({"message": f"Failed to save dashboard configuration: {str(exc)}"}, status_code=500)
+        return JSONResponse({"message": _route_text(locals().get("lang", "es"), "save_config_failed", error=str(exc))}, status_code=500)
 
 
 @mcp.custom_route(HTTP_DASHBOARD_SAPLOGON_PATH, methods=["GET"], include_in_schema=False)
 async def dashboard_list_saplogon_entries(_request):
     """Return the SAP Logon entries discovered from the local SAP UI Landscape XML files."""
+    lang = _dashboard_request_lang(_request)
     try:
         return JSONResponse(list_sap_logon_entries())
     except Exception as exc:
-        return JSONResponse({"message": f"Failed to load SAP Logon entries: {str(exc)}"}, status_code=500)
+        return JSONResponse({"message": _route_text(lang, "load_saplogon_failed", error=str(exc))}, status_code=500)
 
 
 @mcp.custom_route(HTTP_DASHBOARD_SAPLOGON_IMPORT_PATH, methods=["POST"], include_in_schema=False)
@@ -1486,6 +2021,7 @@ async def dashboard_import_saplogon_entry(request):
     """Resolve the HTTPS endpoint for one SAP Logon entry through a temporary SAP GUI session."""
     try:
         payload = await request.json()
+        lang = _dashboard_payload_lang(payload)
         connection_name = str(payload.get("name", "") or "").strip()
         host = str(payload.get("host", "") or "").strip()
         result = await asyncio.to_thread(
@@ -1496,17 +2032,17 @@ async def dashboard_import_saplogon_entry(request):
             client=str(payload.get("client", "") or "").strip(),
             user=str(payload.get("user", "") or "").strip(),
             password=str(payload.get("password", "") or ""),
-            language=str(payload.get("language", "") or "EN").strip() or "EN",
+            language=str(payload.get("sapLanguage", "") or "EN").strip() or "EN",
         )
         protocol = str(result.get("protocol", "") or "").strip().lower()
         protocol_label = "HTTPS" if protocol == "https" else "HTTP"
-        message = f"Puerto {protocol_label} detectado automáticamente para {connection_name}: {result['server']}"
+        message = _route_text(lang, "port_detected", protocol=protocol_label, connection=connection_name, server=result["server"])
         used_connection_name = str(result.get("connectionName", "") or "").strip()
         if used_connection_name and used_connection_name != connection_name:
-            message += f". Se ha utilizado la entrada SAP GUI '{used_connection_name}' porque la seleccionada no se podía abrir automáticamente."
+            message += _route_text(lang, "fallback_connection", connection=used_connection_name)
         default_client = str(result.get("defaultClient", "") or "").strip()
         if default_client:
-            message += f". Mandante detectado: {default_client}."
+            message += _route_text(lang, "default_client", client=default_client)
         return JSONResponse({
             **result,
             "message": message,
@@ -1516,16 +2052,17 @@ async def dashboard_import_saplogon_entry(request):
     except RuntimeError as exc:
         return JSONResponse({"message": str(exc)}, status_code=409)
     except Exception as exc:
-        return JSONResponse({"message": f"Failed to import the SAP Logon entry automatically: {str(exc)}"}, status_code=500)
+        return JSONResponse({"message": _route_text(locals().get("lang", "es"), "import_saplogon_failed", error=str(exc))}, status_code=500)
 
 
 @mcp.custom_route(HTTP_DASHBOARD_PLAYWRIGHT_STATUS_PATH, methods=["GET"], include_in_schema=False)
 async def dashboard_playwright_status(_request):
     """Return the installation status of the Playwright package and Chromium browser."""
+    lang = _dashboard_request_lang(_request)
     try:
         return JSONResponse(await asyncio.to_thread(_get_playwright_status))
     except Exception as exc:
-        return JSONResponse({"message": f"Failed to check Playwright status: {str(exc)}"}, status_code=500)
+        return JSONResponse({"message": _route_text(lang, "check_playwright_failed", error=str(exc))}, status_code=500)
 
 
 @mcp.custom_route(HTTP_DASHBOARD_PLAYWRIGHT_INSTALL_PATH, methods=["POST"], include_in_schema=False)
@@ -1535,13 +2072,14 @@ async def dashboard_playwright_install(request):
     import sys
     try:
         payload = await request.json()
+        lang = _dashboard_payload_lang(payload)
         action = str(payload.get("action", "") or "").strip()
         if action == "package":
             cmd = [sys.executable, "-m", "pip", "install", "playwright"]
         elif action == "browser":
             cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
         else:
-            return JSONResponse({"message": f"Unknown action '{action}'. Use 'package' or 'browser'."}, status_code=400)
+            return JSONResponse({"message": _route_text(lang, "unknown_playwright_action", action=action)}, status_code=400)
 
         result = await asyncio.to_thread(
             subprocess.run,
@@ -1556,9 +2094,9 @@ async def dashboard_playwright_install(request):
             "returnCode": result.returncode,
         })
     except subprocess.TimeoutExpired:
-        return JSONResponse({"success": False, "output": "El comando superó el tiempo límite de 5 minutos.", "returnCode": -1})
+        return JSONResponse({"success": False, "output": _route_text(locals().get("lang", "es"), "playwright_timeout"), "returnCode": -1})
     except Exception as exc:
-        return JSONResponse({"message": f"Failed to run install command: {str(exc)}"}, status_code=500)
+        return JSONResponse({"message": _route_text(locals().get("lang", "es"), "run_install_failed", error=str(exc))}, status_code=500)
 
 
 @mcp.custom_route("/", methods=["GET"], include_in_schema=False)
@@ -3614,7 +4152,6 @@ def _parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
-    print("\n--- Initiating FastMCP server through __main__ ---")
     args = _parse_args()
     RUN_HOST = args.host
     RUN_PORT = args.port
