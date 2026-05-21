@@ -58,7 +58,6 @@ def get_csrf_token(systemId: str) -> str:
         session.auth = HTTPBasicAuth(system_config.user, system_config.password)
         session.verify = system_config.verify_ssl
         session.headers.pop("X-CSRF-Token", None)
-        set_session(systemId, session)
 
     url = (
         f"{system_config.server}/sap/bc/adt/discovery"
@@ -67,6 +66,11 @@ def get_csrf_token(systemId: str) -> str:
     headers = build_adt_headers(includeCsrfToken=True)
 
     response = session.get(url, headers=headers)
+    if response.status_code != 200:
+        set_session(systemId, None)
+        return ""
+
+    set_session(systemId, session)
     session.headers.update({"X-CSRF-Token": response.headers.get("X-CSRF-Token", "")})
     return response.headers.get("X-CSRF-Token", "")
 

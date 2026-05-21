@@ -29,6 +29,7 @@ class SapSystemConfig(BaseModel):
     language: str = Field("EN", description="Default SAP logon language.")
     verify_ssl: bool = Field(False, description="Whether SSL certificates must be verified.")
     sap_gui_connection_name: str | None = Field(None, description="Optional SAP Logon entry name used to open SAP GUI sessions.")
+    sap_webgui_url: str | None = Field(None, description="Optional base URL of the SAP WebGUI (ITS) endpoint, e.g. 'https://server:port/sap/bc/gui/sap/its/webgui'. Required to open sap_webgui_session.")
 
 
 class SapSystemInfo(BaseModel):
@@ -81,7 +82,8 @@ def _load_legacy_single_system() -> list[dict]:
         "client": client,
         "language": os.getenv("SAP_LANGUAGE", "EN"),
         "verify_ssl": _parse_verify_ssl(os.getenv("SAP_VERIFY_SSL", "false")),
-        "sap_gui_connection_name": os.getenv("SAP_GUI_CONNECTION_NAME")
+        "sap_gui_connection_name": os.getenv("SAP_GUI_CONNECTION_NAME"),
+        "sap_webgui_url": os.getenv("SAP_WEBGUI_URL"),
     }]
 
 
@@ -136,7 +138,12 @@ def _load_system_configs() -> dict[str, SapSystemConfig]:
                 str(raw_system["sap_gui_connection_name"])
                 if raw_system.get("sap_gui_connection_name")
                 else None
-            )
+            ),
+            sap_webgui_url=(
+                str(raw_system["sap_webgui_url"])
+                if raw_system.get("sap_webgui_url")
+                else None
+            ),
         )
 
     return configs

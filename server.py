@@ -25,6 +25,7 @@ from activation.activation import *
 from configuration import *
 from connection.connection import *
 from cts.cts import *
+from datapreview.datapreview import *
 from deletion.deletion import *
 from ddic.db.settings import *
 from ddic.dataelements.dataelements import *
@@ -46,10 +47,15 @@ from utils import *
 from source.classes.classes import *
 from source.classes.testclasses import *
 from source.programs.programs import *
+from abapunit.abapunit import *
+from checkruns.checkruns import *
+from webgui.webgui import *
 
 LOGGER = logging.getLogger("abap_mcp")
 HTTP_DASHBOARD_CONFIG_PATH = "/mcp/abap/api/dashboard/config"
 HTTP_DASHBOARD_SAPLOGON_PATH = "/mcp/abap/api/dashboard/saplogon"
+HTTP_DASHBOARD_PLAYWRIGHT_STATUS_PATH = "/mcp/abap/api/dashboard/playwright/status"
+HTTP_DASHBOARD_PLAYWRIGHT_INSTALL_PATH = "/mcp/abap/api/dashboard/playwright/install"
 HTTP_DASHBOARD_MCP_STATUS_PATH = "/mcp/abap/api/dashboard/mcp-status"
 HTTP_DASHBOARD_MEMORY_TREE_PATH = "/mcp/abap/api/dashboard/memory/tree"
 HTTP_DASHBOARD_MEMORY_DOCUMENT_PATH = "/mcp/abap/api/dashboard/memory/document"
@@ -183,6 +189,37 @@ async def abap_lifespan(_server: FastMCP):
     LOGGER.info("Servidor listo en http://%s:%s%s (%.2fs)", RUN_HOST, RUN_PORT, RUN_PATH, time.perf_counter() - startup_started)
     yield
     LOGGER.info("Apagando servidor ABAP MCP...")
+
+
+def _get_playwright_status() -> dict:
+    """Check whether the Playwright Python package and the Chromium browser are installed."""
+    import importlib.util
+    import os
+
+    package_installed = importlib.util.find_spec("playwright") is not None
+    package_version = ""
+    if package_installed:
+        try:
+            from importlib.metadata import version as _pkg_version
+            package_version = _pkg_version("playwright")
+        except Exception:
+            pass
+
+    browser_installed = False
+    if package_installed:
+        try:
+            from playwright.sync_api import sync_playwright as _swp
+            _instance = _swp().start()
+            browser_installed = os.path.exists(_instance.chromium.executable_path)
+            _instance.stop()
+        except Exception:
+            browser_installed = False
+
+    return {
+        "packageInstalled": package_installed,
+        "packageVersion": package_version,
+        "browserInstalled": browser_installed,
+    }
 
 
 def _dashboard_html() -> str:
@@ -578,6 +615,29 @@ def _dashboard_html() -> str:
           </table>
         </div>
       </div>
+
+      <div class="panel">
+        <div class="toolbar">
+          <div>
+            <strong>Playwright</strong>
+            <p style="margin:8px 0 0;">Requerido para las tools de SAP WebGUI. Necesita el paquete Python y el navegador Chromium.</p>
+          </div>
+          <button class="button secondary" id="refreshPlaywrightButton" type="button">Actualizar</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Componente</th>
+                <th>Estado</th>
+                <th>Acción</th>
+              </tr>
+            </thead>
+            <tbody id="playwrightTableBody"></tbody>
+          </table>
+        </div>
+        <div id="playwrightLog" style="display:none; margin-top:12px; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:6px; font-family:monospace; font-size:12px; white-space:pre-wrap; max-height:180px; overflow-y:auto;"></div>
+      </div>
     </section>
 
     <section id="tabPanelEnv" class="tab-panel" hidden>
@@ -608,6 +668,7 @@ def _dashboard_html() -> str:
                 <th>Idioma</th>
                 <th>SSL</th>
                 <th>Entrada SAP GUI</th>
+                <th>URL WebGUI</th>
                 <th>Acciones</th>
               </tr>
             </thead>
@@ -688,6 +749,10 @@ def _dashboard_html() -> str:
           <input id="sapGuiConnectionName" type="text" placeholder="Nombre exacto en SAP Logon" />
         </div>
         <div class="field full">
+          <label for="sapWebguiUrl">URL WebGUI</label>
+          <input id="sapWebguiUrl" type="text" placeholder="https://servidor:puerto/sap/bc/gui/sap/its/webgui" />
+        </div>
+        <div class="field full">
           <div class="inline-actions">
             <button class="button secondary" type="button" id="importSapLogonButton">Importar desde SAP Logon</button>
             <button class="button secondary" type="button" id="openPortHelpButton" title="Abrir ayuda para localizar el puerto HTTPS en SAP GUI">?</button>
@@ -738,6 +803,8 @@ def _dashboard_html() -> str:
     const portHelpUrl = {json.dumps(HTTP_DASHBOARD_PORT_HELP_PATH)};
     const memoryTreeUrl = {json.dumps(HTTP_DASHBOARD_MEMORY_TREE_PATH)};
     const memoryDocumentUrl = {json.dumps(HTTP_DASHBOARD_MEMORY_DOCUMENT_PATH)};
+    const playwrightStatusUrl = {json.dumps(HTTP_DASHBOARD_PLAYWRIGHT_STATUS_PATH)};
+    const playwrightInstallUrl = {json.dumps(HTTP_DASHBOARD_PLAYWRIGHT_INSTALL_PATH)};
     const systems = [];
     const mcpClients = [];
     let sapLogonEntries = [];
@@ -800,6 +867,7 @@ def _dashboard_html() -> str:
           <td>${{escapeHtml(system.language || "")}}</td>
           <td>${{system.verify_ssl ? "Sí" : "No"}}</td>
           <td>${{escapeHtml(system.sap_gui_connection_name || "")}}</td>
+          <td>${{escapeHtml(system.sap_webgui_url || "")}}</td>
           <td>
             <div class="inline-actions">
               <button class="button secondary" type="button" data-action="edit" data-index="${{index}}">Editar</button>
@@ -878,6 +946,71 @@ def _dashboard_html() -> str:
       mcpClients.length = 0;
       (payload.clients || []).forEach((client) => mcpClients.push(client));
       renderMcpClients();
+    }}
+
+    function renderPlaywrightStatus(status) {{
+      const tbody = document.getElementById("playwrightTableBody");
+      tbody.innerHTML = "";
+      const installed = status.browserInstalled;
+      const disabled = !status.packageInstalled;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>Navegador Chromium</td>
+        <td><span class="signal"><span class="signal-dot ${{installed ? "ok" : "off"}}"></span>${{installed ? "Instalado" : "No instalado"}}</span></td>
+        <td>
+          <button class="button secondary" type="button"
+            data-playwright-action="browser"
+            ${{installed || disabled ? "disabled" : ""}}
+            title="${{disabled ? 'El paquete playwright no está instalado. Ejecuta: pip install playwright' : ''}}">
+            ${{installed ? "Instalado" : "playwright install chromium"}}
+          </button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    }}
+
+    async function loadPlaywrightStatus() {{
+      const tbody = document.getElementById("playwrightTableBody");
+      tbody.innerHTML = '<tr><td colspan="3" class="subtle">Comprobando...</td></tr>';
+      try {{
+        const response = await fetch(playwrightStatusUrl, {{ credentials: "same-origin" }});
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "Error al comprobar Playwright.");
+        renderPlaywrightStatus(payload);
+      }} catch (err) {{
+        tbody.innerHTML = `<tr><td colspan="3" style="color:var(--danger);">${{err.message}}</td></tr>`;
+      }}
+    }}
+
+    async function installPlaywright(action) {{
+      const log = document.getElementById("playwrightLog");
+      const tbody = document.getElementById("playwrightTableBody");
+      const label = action === "package" ? "pip install playwright" : "playwright install chromium";
+
+      log.style.display = "block";
+      log.textContent = `Ejecutando: ${{label}}\nEspera, esto puede tardar unos minutos...`;
+      tbody.querySelectorAll("button[data-playwright-action]").forEach((b) => b.disabled = true);
+
+      try {{
+        const response = await fetch(playwrightInstallUrl, {{
+          method: "POST",
+          credentials: "same-origin",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{ action }}),
+        }});
+        const payload = await response.json();
+        log.textContent = (payload.output || "").trim() || (payload.message || "Sin salida.");
+        if (!response.ok || !payload.success) {{
+          log.style.color = "var(--danger)";
+        }} else {{
+          log.style.color = "var(--accent)";
+          log.textContent += "\\n\\nCompletado.";
+        }}
+      }} catch (err) {{
+        log.textContent = `Error: ${{err.message}}`;
+        log.style.color = "var(--danger)";
+      }}
+      await loadPlaywrightStatus();
     }}
 
     async function loadMemoryTree() {{
@@ -997,7 +1130,7 @@ def _dashboard_html() -> str:
     function openEditor(index) {{
       editingIndex = index;
       const source = index === null
-        ? {{ id: "", name: "", type: "", server: "", user: "", password: "", client: "", language: "EN", verify_ssl: false, sap_gui_connection_name: "" }}
+        ? {{ id: "", name: "", type: "", server: "", user: "", password: "", client: "", language: "EN", verify_ssl: false, sap_gui_connection_name: "", sap_webgui_url: "" }}
         : systems[index];
 
       dialogTitle.textContent = index === null ? "Añadir conexión SAP" : "Editar conexión SAP";
@@ -1011,6 +1144,7 @@ def _dashboard_html() -> str:
       document.getElementById("systemLanguage").value = source.language || "EN";
       document.getElementById("verifySsl").checked = Boolean(source.verify_ssl);
       document.getElementById("sapGuiConnectionName").value = source.sap_gui_connection_name || "";
+      document.getElementById("sapWebguiUrl").value = source.sap_webgui_url || "";
       editorDialog.showModal();
     }}
 
@@ -1117,6 +1251,7 @@ def _dashboard_html() -> str:
         language: document.getElementById("systemLanguage").value.trim() || "EN",
         verify_ssl: document.getElementById("verifySsl").checked,
         sap_gui_connection_name: document.getElementById("sapGuiConnectionName").value.trim(),
+        sap_webgui_url: document.getElementById("sapWebguiUrl").value.trim(),
       }};
 
       if (editingIndex === null) {{
@@ -1229,8 +1364,15 @@ def _dashboard_html() -> str:
       await loadConfig();
     }});
 
+    document.getElementById("refreshPlaywrightButton").addEventListener("click", loadPlaywrightStatus);
+    document.getElementById("playwrightTableBody").addEventListener("click", async (event) => {{
+      const button = event.target.closest("button[data-playwright-action]");
+      if (!button || button.disabled) return;
+      await installPlaywright(button.dataset.playwrightAction);
+    }});
+
     showMemoryPlaceholder();
-    Promise.all([loadConfig(), loadMcpClients(), loadMemoryTree()]).catch((error) => {{
+    Promise.all([loadConfig(), loadMcpClients(), loadMemoryTree(), loadPlaywrightStatus()]).catch((error) => {{
       console.error(error);
       setStatus(error.message || "No se pudo cargar la configuración.", true);
     }});
@@ -1375,6 +1517,48 @@ async def dashboard_import_saplogon_entry(request):
         return JSONResponse({"message": str(exc)}, status_code=409)
     except Exception as exc:
         return JSONResponse({"message": f"Failed to import the SAP Logon entry automatically: {str(exc)}"}, status_code=500)
+
+
+@mcp.custom_route(HTTP_DASHBOARD_PLAYWRIGHT_STATUS_PATH, methods=["GET"], include_in_schema=False)
+async def dashboard_playwright_status(_request):
+    """Return the installation status of the Playwright package and Chromium browser."""
+    try:
+        return JSONResponse(await asyncio.to_thread(_get_playwright_status))
+    except Exception as exc:
+        return JSONResponse({"message": f"Failed to check Playwright status: {str(exc)}"}, status_code=500)
+
+
+@mcp.custom_route(HTTP_DASHBOARD_PLAYWRIGHT_INSTALL_PATH, methods=["POST"], include_in_schema=False)
+async def dashboard_playwright_install(request):
+    """Run pip install playwright or playwright install chromium in a background thread."""
+    import subprocess
+    import sys
+    try:
+        payload = await request.json()
+        action = str(payload.get("action", "") or "").strip()
+        if action == "package":
+            cmd = [sys.executable, "-m", "pip", "install", "playwright"]
+        elif action == "browser":
+            cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
+        else:
+            return JSONResponse({"message": f"Unknown action '{action}'. Use 'package' or 'browser'."}, status_code=400)
+
+        result = await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        return JSONResponse({
+            "success": result.returncode == 0,
+            "output": result.stdout + result.stderr,
+            "returnCode": result.returncode,
+        })
+    except subprocess.TimeoutExpired:
+        return JSONResponse({"success": False, "output": "El comando superó el tiempo límite de 5 minutos.", "returnCode": -1})
+    except Exception as exc:
+        return JSONResponse({"message": f"Failed to run install command: {str(exc)}"}, status_code=500)
 
 
 @mcp.custom_route("/", methods=["GET"], include_in_schema=False)
@@ -3132,6 +3316,290 @@ def ddic_ddl_source_write_from_file(
 ) -> FileTransferResponse:
     """Upload raw CDS source code from a local file to one existing CDS DDL source through its `/source/main` endpoint. The tool locks the DDL source, writes the new source, and unlocks it automatically."""
     return call_ddic_ddl_source_write_from_file(systemId, name, filePath, transportNumber)
+# endregion
+
+# region SAP WebGUI
+@mcp.tool()
+def sap_webgui_sessions_list() -> SapWebguiSessionListResponse:
+    """List all SAP WebGUI browser sessions currently open in the MCP server.
+
+    Returns the internal webguiSessionId, the SAP system identifier, and the
+    current browser URL for each open session."""
+    return call_sap_webgui_sessions_list()
+
+
+@mcp.tool()
+def sap_webgui_session_open(
+    systemId: str = Field(..., description="Identifier of the configured SAP system to open. The system must have 'sap_webgui_url' configured in the dashboard.")
+) -> SapWebguiSessionOpenResponse:
+    """Open a Chromium browser window, navigate to the SAP WebGUI URL, and log in automatically.
+
+    Credentials and the WebGUI URL are read from the server configuration — the AI
+    never has access to them. The returned webguiSessionId identifies the session
+    for subsequent Playwright operations and must be passed to sap_webgui_session_close
+    when done."""
+    return call_sap_webgui_session_open(systemId)
+
+
+@mcp.tool()
+def sap_webgui_session_close(
+    webguiSessionId: str = Field(..., description="Internal MCP identifier of the SAP WebGUI session to close. Returned by sap_webgui_session_open.")
+) -> SapWebguiSessionCloseResponse:
+    """Close one SAP WebGUI browser session and remove it from the MCP server registry.
+
+    The underlying Chromium page is closed. If the page was already gone the
+    alreadyClosed flag in the response will be True."""
+    return call_sap_webgui_session_close(webguiSessionId)
+
+
+@mcp.tool()
+def sap_webgui_snapshot(
+    webguiSessionId: str = Field(..., description="Internal MCP identifier of the SAP WebGUI session. Returned by sap_webgui_session_open.")
+) -> SapWebguiSnapshotResponse:
+    """Capture the accessibility tree of the current SAP WebGUI page.
+
+    Returns the full UI structure as a JSON string. Use this to discover element
+    selectors and understand the current screen state before performing actions.
+    Prefer this over sap_webgui_screenshot when you need to interact with elements."""
+    return call_sap_webgui_snapshot(webguiSessionId)
+
+
+@mcp.tool()
+def sap_webgui_screenshot(
+    webguiSessionId: str = Field(..., description="Internal MCP identifier of the SAP WebGUI session. Returned by sap_webgui_session_open."),
+    fullPage: bool = Field(False, description="When True captures the full scrollable page. When False (default) captures only the visible viewport.")
+) -> SapWebguiScreenshotResponse:
+    """Take a PNG screenshot of the current SAP WebGUI page.
+
+    Returns the image encoded as base64. Use this for visual confirmation of the
+    current screen state. For element interaction, use sap_webgui_snapshot instead."""
+    return call_sap_webgui_screenshot(webguiSessionId, fullPage)
+
+
+@mcp.tool()
+def sap_webgui_click(
+    webguiSessionId: str = Field(..., description="Internal MCP identifier of the SAP WebGUI session. Returned by sap_webgui_session_open."),
+    target: str = Field(..., description="CSS selector or element reference identifying the element to click. Obtain from sap_webgui_snapshot."),
+    button: str = Field("left", description="Mouse button to use: 'left' (default), 'right', or 'middle'."),
+    doubleClick: bool = Field(False, description="When True performs a double-click instead of a single click."),
+    modifiers: list[str] = Field(default_factory=list, description="Keyboard modifiers to hold during the click: 'Alt', 'Control', 'Meta', 'Shift'.")
+) -> SapWebguiActionResponse:
+    """Click an element on the current SAP WebGUI page.
+
+    Use sap_webgui_snapshot first to obtain the exact element selector.
+    Returns the current URL after the click so you can verify navigation."""
+    return call_sap_webgui_click(webguiSessionId, target, button, doubleClick, modifiers)
+
+
+@mcp.tool()
+def sap_webgui_type(
+    webguiSessionId: str = Field(..., description="Internal MCP identifier of the SAP WebGUI session. Returned by sap_webgui_session_open."),
+    target: str = Field(..., description="CSS selector or element reference identifying the input field. Obtain from sap_webgui_snapshot."),
+    text: str = Field(..., description="Text to type into the field."),
+    slowly: bool = Field(False, description="When True types one character at a time, useful for fields with key-press handlers. Default is False (fill all at once)."),
+    submit: bool = Field(False, description="When True presses Enter after typing, useful for search fields and transaction boxes.")
+) -> SapWebguiActionResponse:
+    """Type text into a field on the current SAP WebGUI page.
+
+    Use slowly=True for SAP fields with auto-complete or value-help triggers.
+    Use submit=True to confirm input without a separate sap_webgui_press_key call."""
+    return call_sap_webgui_type(webguiSessionId, target, text, slowly, submit)
+
+
+@mcp.tool()
+def sap_webgui_press_key(
+    webguiSessionId: str = Field(..., description="Internal MCP identifier of the SAP WebGUI session. Returned by sap_webgui_session_open."),
+    key: str = Field(..., description="Key name to press, e.g. 'Enter', 'Escape', 'F4', 'F8', 'Tab', 'ArrowDown'. Follows Playwright key naming conventions.")
+) -> SapWebguiActionResponse:
+    """Press a keyboard key on the current SAP WebGUI page.
+
+    Essential for SAP navigation: Enter to confirm, F4 for value help, F8 to execute,
+    Escape to cancel, Tab to move between fields."""
+    return call_sap_webgui_press_key(webguiSessionId, key)
+
+
+@mcp.tool()
+def sap_webgui_fill_form(
+    webguiSessionId: str = Field(..., description="Internal MCP identifier of the SAP WebGUI session. Returned by sap_webgui_session_open."),
+    fields: list[SapWebguiFillFormField] = Field(..., description="List of fields to fill. Each field requires target (selector), name (label), type (textbox/checkbox/radio/combobox) and value.")
+) -> SapWebguiFillFormResponse:
+    """Fill multiple form fields at once on the current SAP WebGUI page.
+
+    More efficient than calling sap_webgui_type for each field individually.
+    Use sap_webgui_snapshot first to discover selectors and field types."""
+    return call_sap_webgui_fill_form(webguiSessionId, fields)
+
+
+@mcp.tool()
+def sap_webgui_navigate(
+    webguiSessionId: str = Field(..., description="Internal MCP identifier of the SAP WebGUI session. Returned by sap_webgui_session_open."),
+    url: str = Field(..., description="Full URL to navigate to, e.g. a SAP WebGUI transaction URL.")
+) -> SapWebguiActionResponse:
+    """Navigate the SAP WebGUI browser session to a specific URL.
+
+    Use this to jump directly to a SAP transaction URL without manual navigation.
+    Returns the actual URL after navigation (which may differ due to SAP redirects)."""
+    return call_sap_webgui_navigate(webguiSessionId, url)
+
+
+@mcp.tool()
+def sap_webgui_recording_start(
+    webguiSessionId: str = Field(..., description="Internal MCP identifier of the SAP WebGUI session. Returned by sap_webgui_session_open."),
+    outputFile: str = Field("recording.ts", description="Path where the TypeScript script will be written in real time. Relative paths are resolved from the working directory of the MCP server process.")
+) -> SapWebguiRecordingStartResponse:
+    """Start recording user actions in the SAP WebGUI browser as a Playwright TypeScript script.
+
+    Uses Playwright's built-in recorder (the same engine as `playwright codegen`)
+    on the existing browser session. Actions are written to outputFile in real time
+    as the user interacts with the browser. Call sap_webgui_recording_stop when done
+    to disable the recorder and retrieve the generated script."""
+    return call_sap_webgui_recording_start(webguiSessionId, outputFile)
+
+
+@mcp.tool()
+def sap_webgui_recording_stop(
+    webguiSessionId: str = Field(..., description="Internal MCP identifier of the SAP WebGUI session. Returned by sap_webgui_session_open.")
+) -> SapWebguiRecordingStopResponse:
+    """Stop the active Playwright recording session and return the generated TypeScript script.
+
+    Disables the recorder and reads the TypeScript file written during recording.
+    The script is returned both as a string in the response and kept on disk at outputFile.
+    After this call the browser continues to work normally."""
+    return call_sap_webgui_recording_stop(webguiSessionId)
+# endregion
+
+
+# region Data Preview
+@mcp.tool()
+def datapreview_metadata(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC entity exists. Call login first for this system."),
+    ddicEntityName: str = Field(..., description="Technical DDIC table, database view or CDS SQL view name to inspect, e.g. USR01. The tool calls /sap/bc/adt/datapreview/ddic/<entity>/metadata.")
+) -> DataPreviewMetadataResponse:
+    """Read ADT data preview metadata for one DDIC entity.
+
+    Use this to discover available fields, types, DDIC descriptions and lengths before
+    building a data preview query."""
+    return call_datapreview_metadata(systemId, ddicEntityName)
+
+
+@mcp.tool()
+def datapreview_table_contents(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC entity exists. Call login first for this system."),
+    ddicEntityName: str = Field(..., description="Technical DDIC table, database view or CDS SQL view name to read, e.g. USR01. Used as ddicEntityName on the ADT datapreview/ddic endpoint."),
+    rowNumber: int = Field(100, description="Maximum number of rows SAP should return. This is passed as ADT rowNumber, not applied client-side."),
+    where: str = Field("", description="Optional ABAP Open SQL WHERE condition without the WHERE keyword, e.g. BNAME = 'DEVELOPER'. Use ABAP Open SQL syntax, not database-specific SQL. Used only when sqlQuery is empty."),
+    sqlQuery: str = Field("", description="Optional full ABAP Open SQL SELECT to send to the DDIC data preview endpoint. Use ABAP Open SQL syntax, e.g. table~field notation; avoid database-specific SQL. Leave empty to let the tool fetch metadata and generate SELECT <all fields> FROM <entity> plus optional where."),
+    outputFormat: str = Field("md", description="Inline output format: raw, md or csv. raw returns SAP XML; md/csv return row-oriented table text and include parsed field metadata.")
+) -> DataPreviewResultResponse:
+    """Read DDIC data preview contents and return them as raw XML, Markdown or CSV.
+
+    Markdown and CSV outputs include field metadata in a separate response property so
+    an AI can reason over column names, types and lengths."""
+    return call_datapreview_table_contents(systemId, ddicEntityName, rowNumber, where, sqlQuery, outputFormat)
+
+
+@mcp.tool()
+def datapreview_run_query(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the query should run. Call login first for this system."),
+    sqlQuery: str = Field(..., description="Freestyle ABAP Open SQL SELECT statement to execute through /sap/bc/adt/datapreview/freestyle. Use ABAP Open SQL syntax, not database-specific SQL. Use this for joins, aliases, calculations or arbitrary SELECTs supported by ABAP Open SQL."),
+    rowNumber: int = Field(100, description="Maximum number of rows SAP should return. This is passed as ADT rowNumber, not applied client-side."),
+    outputFormat: str = Field("md", description="Inline output format: raw, md or csv. raw returns SAP XML; md/csv return row-oriented table text and include parsed field metadata.")
+) -> DataPreviewResultResponse:
+    """Run a freestyle ABAP Open SQL data preview query and return raw XML, Markdown or CSV."""
+    return call_datapreview_run_query(systemId, sqlQuery, rowNumber, outputFormat)
+
+
+@mcp.tool()
+def datapreview_table_contents_to_file(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC entity exists. Call login first for this system."),
+    ddicEntityName: str = Field(..., description="Technical DDIC table, database view or CDS SQL view name to read, e.g. USR01."),
+    filePath: str = Field(..., description="Destination file path for the exported data, e.g. usr01.csv, usr01.md or usr01.xlsx. Relative paths are resolved from the MCP server working directory."),
+    rowNumber: int = Field(100, description="Maximum number of rows SAP should return. This is passed as ADT rowNumber, not applied client-side."),
+    where: str = Field("", description="Optional ABAP Open SQL WHERE condition without the WHERE keyword, e.g. BNAME = 'DEVELOPER'. Use ABAP Open SQL syntax, not database-specific SQL. Used only when sqlQuery is empty."),
+    sqlQuery: str = Field("", description="Optional full ABAP Open SQL SELECT to send to the DDIC data preview endpoint. Use ABAP Open SQL syntax, e.g. table~field notation; avoid database-specific SQL. Leave empty to let the tool fetch metadata and generate SELECT <all fields> FROM <entity> plus optional where."),
+    outputFormat: str = Field("csv", description="File output format: raw, md, csv or xlsx. md/csv write a JSON sidecar '<filePath>.metadata'; xlsx embeds data, metadata and query details in workbook sheets.")
+) -> DataPreviewFileResponse:
+    """Read DDIC data preview contents and write them to a local file.
+
+    When outputFormat is md or csv, the field metadata is written as JSON to
+    '<filePath>.metadata'. XLSX stores metadata inside the workbook."""
+    return call_datapreview_table_contents_to_file(systemId, ddicEntityName, filePath, rowNumber, where, sqlQuery, outputFormat)
+
+
+@mcp.tool()
+def datapreview_run_query_to_file(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the query should run. Call login first for this system."),
+    sqlQuery: str = Field(..., description="Freestyle ABAP Open SQL SELECT statement to execute through /sap/bc/adt/datapreview/freestyle. Use ABAP Open SQL syntax, not database-specific SQL. Use this for joins, aliases, calculations or arbitrary SELECTs supported by ABAP Open SQL."),
+    filePath: str = Field(..., description="Destination file path for the exported data, e.g. query.csv, query.md or query.xlsx. Relative paths are resolved from the MCP server working directory."),
+    rowNumber: int = Field(100, description="Maximum number of rows SAP should return. This is passed as ADT rowNumber, not applied client-side."),
+    outputFormat: str = Field("csv", description="File output format: raw, md, csv or xlsx. md/csv write a JSON sidecar '<filePath>.metadata'; xlsx embeds data, metadata and query details in workbook sheets.")
+) -> DataPreviewFileResponse:
+    """Run a freestyle ABAP Open SQL data preview query and write the result to a local file."""
+    return call_datapreview_run_query_to_file(systemId, sqlQuery, filePath, rowNumber, outputFormat)
+# endregion
+
+
+# region Check Runs
+@mcp.tool()
+def checkrun_syntax_check(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the syntax check should run."),
+    objectUri: str = Field(..., description="ADT repository object URI of the object to check, e.g. '/sap/bc/adt/oo/classes/zcl_my_class' or '/sap/bc/adt/ddic/ddl/sources/yjrs_cds_0001'."),
+    sourceUri: str = Field(..., description="ADT source URI of the content to check, e.g. '/sap/bc/adt/oo/classes/zcl_my_class/source/main'. Typically the objectUri with '/source/main' appended."),
+    source: str = Field(..., description="Full source code to syntax-check. The content is base64-encoded before being sent to SAP, so any valid Unicode text is accepted."),
+    version: str = Field("inactive", description="Object version to check against: 'inactive' to check the provided source before activation, 'active' to check against the currently active version.")
+) -> CheckRunResponse:
+    """Run the SAP ABAP syntax checker for one repository object through the ADT checkruns endpoint.
+
+    The source content is sent to SAP base64-encoded and checked without saving.
+    The response contains per-message detail including source position (line and column)
+    for each error or warning, which can be correlated against the source to locate issues."""
+    return call_checkrun(systemId, objectUri, sourceUri, source, version)
+# endregion
+
+
+# region ABAP Unit
+@mcp.tool()
+def abapunit_run(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP Unit tests should be executed."),
+    objectUris: list[str] = Field(..., description="List of ADT repository object URIs whose unit tests should be run (e.g. '/sap/bc/adt/oo/classes/zcl_my_class')."),
+    withCoverage: bool = Field(True, description="When True the SAP system collects code coverage data alongside the test run. Set to False if you only need pass/fail results.")
+) -> AbapUnitRunResponse:
+    """Execute ABAP Unit tests for one or more repository objects and return aggregated pass/fail results with per-method detail.
+
+    The response includes a `coverageMeasurementUri` field. Pass that URI to
+    `abapunit_coverage_query` to retrieve per-class and per-method coverage
+    percentages for the same test run."""
+    return call_abapunit_run(systemId, objectUris, withCoverage)
+
+
+@mcp.tool()
+def abapunit_coverage_query(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the coverage measurements were collected."),
+    measurementUri: str = Field(..., description="Coverage measurement URI returned by abapunit_run in the coverageMeasurementUri field."),
+    objectUris: list[str] = Field(..., description="List of ADT repository object URIs to include in the coverage query. Should match the objects passed to abapunit_run.")
+) -> AbapUnitCoverageQueryResponse:
+    """Query coverage summary (statement, branch, procedure percentages) per class and method for a completed ABAP Unit test run.
+
+    Requires the `coverageMeasurementUri` from `abapunit_run`.
+
+    The response includes a `statementsRequestPaths` list. Pass that list directly
+    to `abapunit_coverage_statements` to obtain statement-level (line-by-line)
+    coverage detail for each method."""
+    return call_abapunit_coverage_query(systemId, measurementUri, objectUris)
+
+
+@mcp.tool()
+def abapunit_coverage_statements(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the coverage measurements were collected."),
+    statementsRequestPaths: list[str] = Field(..., description="List of statement request paths returned by abapunit_coverage_query in the statementsRequestPaths field. Each path identifies one method's statement-level coverage data.")
+) -> AbapUnitCoverageStatementsResponse:
+    """Fetch statement-level (line-by-line) coverage detail for one or more ABAP methods via a bulk request.
+
+    Requires the `statementsRequestPaths` list returned by `abapunit_coverage_query`.
+
+    Returns per-method statement execution counts and branch coverage data,
+    allowing precise identification of which lines were not executed during tests."""
+    return call_abapunit_coverage_statements(systemId, statementsRequestPaths)
 # endregion
 
 def _parse_args() -> argparse.Namespace:

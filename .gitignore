@@ -5,3 +5,26 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
+*.py[cod]
+*$py.class
+
+# Test and coverage output
+.coverage
+coverage.xml
+htmlcov/
+
+# Type/lint caches
+.ruff_cache/
+.mypy_cache/
+
+# Local/temp output
+tmp/
+*.log
+
+# Local assistant/editor state
+.claude/
+
+# Runtime DB/cache
+db/chroma/*.sqlite3
+db/chroma/*.sqlite3-*
