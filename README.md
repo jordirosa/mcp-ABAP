@@ -1,46 +1,46 @@
 # mcp-ABAP
 
-Servidor MCP para trabajar con sistemas SAP ABAP desde clientes compatibles con Model Context Protocol. Expone herramientas para sesiones ADT, objetos de desarrollo ABAP, DDIC, transportes, paquetes, data preview, ABAP Unit y automatizacion local de SAP GUI/WebGUI.
+MCP server for working with SAP ABAP systems from clients that support the Model Context Protocol. It exposes tools for ADT sessions, ABAP development objects, DDIC, transports, packages, data preview, ABAP Unit, and local SAP GUI/WebGUI automation.
 
-El proyecto esta pensado para ejecucion local. Las credenciales y sistemas SAP se configuran en `.env`, que no debe versionarse.
+The project is designed to run locally. SAP systems and credentials are configured through a local `.env` file.
 
-## Requisitos
+## Requirements
 
-- Python 3.11 o superior.
-- Acceso HTTP(S) al endpoint ADT del sistema SAP.
-- Usuario SAP con permisos para las operaciones que se quieran ejecutar.
-- En Windows, SAP GUI instalado si se van a usar las tools de SAP GUI.
-- Playwright/Chromium si se van a usar las tools de SAP WebGUI.
+- Python 3.11 or newer.
+- HTTP(S) access to the SAP ADT endpoint.
+- An SAP user with the authorizations required for the operations you want to run.
+- On Windows, SAP GUI installed if you plan to use the SAP GUI tools.
+- Playwright/Chromium installed if you plan to use the SAP WebGUI tools.
 
-## Instalacion
+## Installation
 
-1. Clonar el repositorio:
+1. Clone the repository:
 
    ```powershell
    git clone https://github.com/jordirosa/mcp-ABAP.git
    cd mcp-ABAP
    ```
 
-2. Crear y activar un entorno virtual:
+2. Create and activate a virtual environment:
 
    ```powershell
    python -m venv .venv
    .\.venv\Scripts\Activate.ps1
    ```
 
-3. Instalar dependencias:
+3. Install dependencies:
 
    ```powershell
    pip install -r requirements.txt
    ```
 
-4. Crear la configuracion local:
+4. Create your local configuration:
 
    ```powershell
    copy .env.example .env
    ```
 
-5. Editar `.env` y completar `SAP_SYSTEMS_JSON` con los sistemas SAP disponibles. Como minimo, cada sistema debe definir:
+5. Edit `.env` and fill `SAP_SYSTEMS_JSON` with your available SAP systems. Each system should define at least:
 
    - `id`
    - `name`
@@ -51,73 +51,73 @@ El proyecto esta pensado para ejecucion local. Las credenciales y sistemas SAP s
    - `language`
    - `verify_ssl`
 
-6. Arrancar el servidor en modo HTTP:
+6. Start the server in HTTP mode:
 
    ```powershell
    .\start.bat
    ```
 
-   Por defecto se publica en:
+   By default, the MCP endpoint is published at:
 
    ```text
    http://127.0.0.1:8081/mcp/abap
    ```
 
-7. Abrir el dashboard local:
+7. Open the local dashboard:
 
    ```text
    http://127.0.0.1:8081/mcp/abap/dashboard
    ```
 
-   Desde el dashboard se puede editar la configuracion de sistemas SAP, revisar clientes MCP locales y registrar el servidor en clientes soportados.
+   The dashboard is experimental. It can edit local SAP system configuration, inspect local MCP client setup, and register this server in supported local clients.
 
-## Ejecucion
+## Running
 
-Tambien se puede arrancar directamente con Python:
+You can also start the server directly with Python:
 
 ```powershell
 python server.py --transport http --host 127.0.0.1 --port 8081 --path /mcp/abap --log-level info
 ```
 
-Para integraciones que esperan transporte `stdio`:
+For integrations that expect `stdio` transport:
 
 ```powershell
 python server.py --transport stdio
 ```
 
-## Configuracion SAP
+## SAP Configuration
 
-La configuracion vive en `.env`. El formato recomendado es `SAP_SYSTEMS_JSON`, que permite declarar varios sistemas:
+Configuration is read from `.env`. The recommended format is `SAP_SYSTEMS_JSON`, which supports multiple SAP systems:
 
 ```env
 SAP_SYSTEMS_JSON='[
   {
     "id": "DEV",
-    "name": "Servidor de Desarrollo",
-    "type": "Desarrollo",
+    "name": "Development Server",
+    "type": "Development",
     "server": "https://host-dev:port",
-    "user": "tu_usuario_dev",
-    "password": "tu_password_dev",
+    "user": "your_dev_user",
+    "password": "your_dev_password",
     "client": "500",
     "language": "EN",
     "verify_ssl": false,
-    "sap_gui_connection_name": "Nombre en SAP Logon",
+    "sap_gui_connection_name": "SAP Logon Entry Name",
     "sap_webgui_url": "https://host-dev:port/sap/bc/gui/sap/its/webgui"
   }
 ]'
 ```
 
-Notas:
+Notes:
 
-- `.env` esta ignorado por Git.
-- `.env.example` si se versiona y sirve como plantilla.
-- `sap_gui_connection_name` solo es necesario para las tools de SAP GUI.
-- `sap_webgui_url` solo es necesario para las tools de SAP WebGUI.
-- Si SAP GUI no esta en el `PATH`, se puede definir `SAP_GUI_EXECUTABLE_PATH`.
+- Keep `.env` local because it contains system-specific settings and credentials.
+- `.env.example` is the public template.
+- `sap_gui_connection_name` is only needed for the SAP GUI tools.
+- `sap_webgui_url` is only needed for the SAP WebGUI tools.
+- If SAP GUI is not available in `PATH`, define `SAP_GUI_EXECUTABLE_PATH`.
 
 ## Tools
 
-### Conexion y sistemas
+### Connection And Systems
 
 - `sap_systems_list`
 - `login`
@@ -125,7 +125,7 @@ Notas:
 
 ### SAP GUI (experimental)
 
-Estas tools usan SAP GUI Scripting local. Requieren Windows, SAP GUI instalado, scripting habilitado en servidor/cliente y una entrada valida en SAP Logon.
+These tools use local SAP GUI Scripting. They require Windows, SAP GUI, scripting enabled on both server and client, and a valid SAP Logon entry.
 
 - `sap_gui_sessions_list`
 - `sap_gui_session_open`
@@ -140,7 +140,7 @@ Estas tools usan SAP GUI Scripting local. Requieren Windows, SAP GUI instalado, 
 
 ### SAP WebGUI (experimental)
 
-Estas tools automatizan SAP WebGUI con Playwright/Chromium. Son utiles para flujos visuales, inspeccion de pantalla y grabaciones, pero pueden depender del HTML generado por cada sistema SAP.
+These tools automate SAP WebGUI through Playwright/Chromium. They are useful for visual workflows, screen inspection, and recordings, but can depend on the HTML generated by each SAP system.
 
 - `sap_webgui_sessions_list`
 - `sap_webgui_session_open`
@@ -157,13 +157,13 @@ Estas tools automatizan SAP WebGUI con Playwright/Chromium. Son utiles para fluj
 
 ### Knowledge (experimental)
 
-Estas tools mantienen una base de conocimiento local en `db/documents` y un indice Chroma local en `db/chroma`. El contenido generado en runtime no debe versionarse salvo que se quiera publicar expresamente.
+These tools maintain a local knowledge base under `db/documents` and a local Chroma index under `db/chroma`.
 
 - `knowledge_upsert_document`
 - `knowledge_search`
 - `knowledge_get_document`
 
-### Programas e includes
+### Programs And Includes
 
 - `source_program_create`
 - `source_program_read`
@@ -186,7 +186,7 @@ Estas tools mantienen una base de conocimiento local en `db/documents` y un indi
 - `source_program_include_read_to_file`
 - `source_program_include_write_from_file`
 
-### Clases e interfaces
+### Classes And Interfaces
 
 - `source_class_create`
 - `source_class_read`
@@ -214,7 +214,7 @@ Estas tools mantienen una base de conocimiento local en `db/documents` y un indi
 - `source_interface_read_to_file`
 - `source_interface_write_from_file`
 
-### Grupos de funciones, modulos e includes
+### Function Groups, Function Modules, And Includes
 
 - `source_function_group_create`
 - `source_function_group_read`
@@ -245,7 +245,7 @@ Estas tools mantienen una base de conocimiento local en `db/documents` y un indi
 - `source_function_include_read_to_file`
 - `source_function_include_write_from_file`
 
-### DDIC y CDS
+### DDIC And CDS
 
 - `ddic_table_create`
 - `ddic_table_read`
@@ -278,7 +278,7 @@ Estas tools mantienen una base de conocimiento local en `db/documents` y un indi
 - `ddic_ddl_source_read_to_file`
 - `ddic_ddl_source_write_from_file`
 
-### Paquetes, transportes y activacion
+### Packages, Transports, And Activation
 
 - `package_create`
 - `package_read`
@@ -293,7 +293,7 @@ Estas tools mantienen una base de conocimiento local en `db/documents` y un indi
 - `cts_transport_write_from_file`
 - `activation_activate`
 
-### Busqueda e informacion del repositorio
+### Repository Search
 
 - `info_repository_search`
 
@@ -305,29 +305,29 @@ Estas tools mantienen una base de conocimiento local en `db/documents` y un indi
 - `datapreview_table_contents_to_file`
 - `datapreview_run_query_to_file`
 
-### Checkruns y ABAP Unit
+### Checkruns And ABAP Unit
 
 - `checkrun_syntax_check`
 - `abapunit_run`
 - `abapunit_coverage_query`
 - `abapunit_coverage_statements`
 
-## Desarrollo
+## Development
 
-Ejecutar tests unitarios:
+Run unit tests:
 
 ```powershell
 pytest tests/unit
 ```
 
-Ejecutar todos los tests:
+Run all tests:
 
 ```powershell
 pytest
 ```
 
-Los tests de integracion requieren acceso real a un sistema SAP configurado.
+Integration tests require access to a configured SAP system.
 
-## Licencia
+## License
 
-Este proyecto esta publicado bajo licencia MIT. Ver `LICENSE`.
+This project is licensed under the MIT License. See `LICENSE`.
