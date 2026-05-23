@@ -2,12 +2,13 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import time
 import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Callable
+from typing import Annotated, Any, Callable
 from urllib.parse import quote, unquote
 
 from dashboard.dashboard import (
@@ -70,6 +71,15 @@ RUN_TRANSPORT = "stdio"
 RUN_HOST = "127.0.0.1"
 RUN_PORT = 8081
 RUN_PATH = "/mcp/abap"
+TOOL_MODE_ENV_VAR = "ABAP_MCP_TOOL_MODE"
+TOOL_MODE_FULL = "full"
+TOOL_MODE_COMPACT = "compact"
+COMPACT_TOOL_NAMES = {
+    "abap_list_capabilities",
+    "abap_get_capability_spec",
+    "abap_call_capability",
+}
+CAPABILITY_TOOLS: dict[str, Any] = {}
 
 
 def _memory_documents_root() -> Path:
@@ -4200,6 +4210,175 @@ def abapunit_coverage_statements(
     return call_abapunit_coverage_statements(systemId, statementsRequestPaths)
 # endregion
 
+
+def _normalize_tool_mode(mode: str | None = None) -> str:
+    """Return the configured MCP tool exposure mode."""
+    normalized_mode = str(mode or os.getenv(TOOL_MODE_ENV_VAR, TOOL_MODE_FULL)).strip().lower()
+    if normalized_mode not in {TOOL_MODE_FULL, TOOL_MODE_COMPACT}:
+        raise ValueError(
+            f"{TOOL_MODE_ENV_VAR} must be '{TOOL_MODE_FULL}' or '{TOOL_MODE_COMPACT}', "
+            f"got '{normalized_mode}'."
+        )
+    return normalized_mode
+
+
+def _capability_category(tool_name: str) -> str:
+    """Infer a compact category from an existing ABAP tool name."""
+    parts = tool_name.split("_")
+    if len(parts) >= 2 and parts[0] in {"source", "ddic", "sap"}:
+        return f"{parts[0]}.{parts[1]}"
+    if len(parts) >= 2 and parts[0] in {"info"}:
+        return "info_repository"
+    if len(parts) >= 2 and parts[0] in {"dataelement"}:
+        return "ddic.dataelement"
+    return parts[0] if parts else "general"
+
+
+def _brief_tool_description(description: str | None) -> str:
+    """Return a short first-line summary for the capability list."""
+    text = " ".join(str(description or "").strip().split())
+    if not text:
+        return ""
+    first_sentence_index = text.find(". ")
+    if first_sentence_index >= 0:
+        text = text[:first_sentence_index + 1]
+    return text[:240].rstrip()
+
+
+def _tool_spec(tool: Any) -> dict[str, Any]:
+    """Return the public capability specification for one captured FastMCP tool."""
+    annotations = getattr(tool, "annotations", None)
+    if hasattr(annotations, "model_dump"):
+        annotations = annotations.model_dump(exclude_none=True)
+    return {
+        "name": tool.name,
+        "title": getattr(tool, "title", None),
+        "category": _capability_category(tool.name),
+        "description": getattr(tool, "description", None) or "",
+        "inputSchema": getattr(tool, "parameters", None) or {"type": "object", "properties": {}},
+        "outputSchema": getattr(tool, "output_schema", None),
+        "annotations": annotations,
+    }
+
+
+def _capability_list_item(tool: Any) -> dict[str, str]:
+    """Return the lightweight row exposed by abap_list_capabilities."""
+    return {
+        "name": tool.name,
+        "category": _capability_category(tool.name),
+        "description": _brief_tool_description(getattr(tool, "description", None)),
+    }
+
+
+def _remove_public_tool(tool_name: str) -> None:
+    """Remove one tool from public exposure using the current FastMCP provider API."""
+    local_provider = getattr(mcp, "local_provider", None)
+    if local_provider is not None and hasattr(local_provider, "remove_tool"):
+        local_provider.remove_tool(tool_name)
+        return
+    mcp.remove_tool(tool_name)
+
+
+async def _ensure_compact_capabilities_registered() -> None:
+    """Expose only the compact dispatcher tools while retaining the real tools internally."""
+    public_tools = await mcp.list_tools()
+    real_tools = [tool for tool in public_tools if tool.name not in COMPACT_TOOL_NAMES]
+
+    if real_tools:
+        CAPABILITY_TOOLS.clear()
+        CAPABILITY_TOOLS.update({tool.name: tool for tool in real_tools})
+        for tool in real_tools:
+            _remove_public_tool(tool.name)
+
+    public_tool_names = {tool.name for tool in await mcp.list_tools()}
+    if "abap_list_capabilities" not in public_tool_names:
+        mcp.add_tool(abap_list_capabilities)
+    if "abap_get_capability_spec" not in public_tool_names:
+        mcp.add_tool(abap_get_capability_spec)
+    if "abap_call_capability" not in public_tool_names:
+        mcp.add_tool(abap_call_capability)
+
+
+async def _ensure_full_tools_registered() -> None:
+    """Expose the original ABAP tools and hide the compact dispatcher tools."""
+    public_tool_names = {tool.name for tool in await mcp.list_tools()}
+    for wrapper_name in sorted(COMPACT_TOOL_NAMES):
+        if wrapper_name in public_tool_names:
+            _remove_public_tool(wrapper_name)
+
+    public_tool_names = {tool.name for tool in await mcp.list_tools()}
+    for tool in CAPABILITY_TOOLS.values():
+        if tool.name not in public_tool_names:
+            mcp.add_tool(tool)
+
+
+async def configure_mcp_tool_mode(mode: str | None = None) -> str:
+    """Configure whether the server exposes all tools or the compact capability facade."""
+    normalized_mode = _normalize_tool_mode(mode)
+    if normalized_mode == TOOL_MODE_COMPACT:
+        await _ensure_compact_capabilities_registered()
+    else:
+        await _ensure_full_tools_registered()
+    return normalized_mode
+
+
+async def abap_list_capabilities(
+    category: Annotated[str, Field(description="Optional category filter, e.g. source.program, ddic.table or sap.gui.")] = "",
+    query: Annotated[str, Field(description="Optional case-insensitive text filter applied to capability name, category and brief description.")] = "",
+) -> dict[str, Any]:
+    """List available ABAP capabilities with compact descriptions."""
+    normalized_category = str(category or "").strip().lower()
+    normalized_query = str(query or "").strip().lower()
+    capabilities = []
+    for tool in sorted(CAPABILITY_TOOLS.values(), key=lambda item: item.name):
+        item = _capability_list_item(tool)
+        searchable_text = f"{item['name']} {item['category']} {item['description']}".lower()
+        if normalized_category and item["category"].lower() != normalized_category:
+            continue
+        if normalized_query and normalized_query not in searchable_text:
+            continue
+        capabilities.append(item)
+    return {
+        "capabilities": capabilities,
+        "totalCount": len(capabilities),
+    }
+
+
+async def abap_get_capability_spec(
+    name: Annotated[str, Field(description="Name of the ABAP capability whose full specification should be returned.")],
+) -> dict[str, Any]:
+    """Return the complete input and output specification for one ABAP capability."""
+    capability_name = str(name or "").strip()
+    tool = CAPABILITY_TOOLS.get(capability_name)
+    if tool is None:
+        raise ValueError(f"Unknown ABAP capability: {capability_name}")
+    return _tool_spec(tool)
+
+
+async def abap_call_capability(
+    name: Annotated[str, Field(description="Name of the ABAP capability to call.")],
+    arguments: Annotated[dict[str, Any], Field(description="Arguments object matching the capability specification returned by abap_get_capability_spec.")],
+) -> dict[str, Any]:
+    """Call one ABAP capability by name using arguments matching its specification."""
+    capability_name = str(name or "").strip()
+    tool = CAPABILITY_TOOLS.get(capability_name)
+    if tool is None:
+        raise ValueError(f"Unknown ABAP capability: {capability_name}")
+
+    result = await tool.run(dict(arguments or {}))
+    structured_content = getattr(result, "structured_content", None)
+    if structured_content is not None:
+        return structured_content
+
+    content = []
+    for item in getattr(result, "content", []) or []:
+        if hasattr(item, "model_dump"):
+            content.append(item.model_dump(exclude_none=True))
+        else:
+            content.append(item)
+    return {"content": content}
+
+
 def _parse_args() -> argparse.Namespace:
     """Parse the local command-line options used to launch the server."""
     parser = argparse.ArgumentParser(description="ABAP FastMCP server")
@@ -4217,6 +4396,7 @@ if __name__ == "__main__":
     RUN_PORT = args.port
     RUN_PATH = args.path
     RUN_TRANSPORT = args.transport
+    asyncio.run(configure_mcp_tool_mode())
     if args.transport == "stdio":
         mcp.run(transport="stdio", log_level=args.log_level, show_banner=False)
     else:
