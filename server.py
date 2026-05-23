@@ -30,6 +30,7 @@ from connection.connection import *
 from cts.cts import *
 from datapreview.datapreview import *
 from deletion.deletion import *
+from docu.abap.docu_abap import *
 from ddic.db.settings import *
 from ddic.dataelements.dataelements import *
 from ddic.ddl.ddl import *
@@ -39,6 +40,7 @@ from generics import FileTransferOutput, FileTransferResponse
 from gui.gui import *
 from info_repository.info_repository import *
 from knowledge.knowledge import *
+from navigation.navigation import *
 from packages.packages import *
 from source.functions.includes import *
 from source.functions.fmodule import *
@@ -52,6 +54,7 @@ from source.classes.testclasses import *
 from source.programs.programs import *
 from abapunit.abapunit import *
 from checkruns.checkruns import *
+from codecompletion.codecompletion import *
 from webgui.webgui import *
 
 LOGGER = logging.getLogger("abap_mcp")
@@ -3071,6 +3074,36 @@ def source_program_symbols_write_from_file(
     return call_program_symbols_write_from_file(systemId, name, filePath)
 # endregion
 
+# region Documentation
+@mcp.tool()
+def docu_abap_language_help(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where ABAP keyword documentation should be retrieved."),
+    request: DocuAbapLanguageHelpRequest = Field(..., description="ABAP editor buffer and ADT 1-based #start/#end source range of the selected keyword or language construct."),
+) -> DocuAbapLanguageHelpResponse:
+    """Retrieve ABAP keyword documentation for a selected ABAP source range through /sap/bc/adt/docu/abap/langu."""
+    return call_docu_abap_language_help(systemId, request)
+# endregion
+
+# region Code Completion
+@mcp.tool()
+def codecompletion_proposals(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where ABAP code completion should be calculated."),
+    request: CodeCompletionProposalsRequest = Field(..., description="ABAP editor buffer and cursor position for completion. Set includeElementInfo to true to also fetch ADT element information in the same call."),
+) -> CodeCompletionProposalsResponse:
+    """Calculate ABAP ADT code completion proposals and optionally include element info for a requested source position."""
+    return call_codecompletion_proposals(systemId, request)
+# endregion
+
+# region Navigation
+@mcp.tool()
+def navigation_target(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP source should be resolved."),
+    request: NavigationTargetRequest = Field(..., description="ABAP editor buffer and 1-based source range of the selected symbol. Resolves the symbol definition through /sap/bc/adt/navigation/target."),
+) -> NavigationTargetResponse:
+    """Resolve the ADT navigation target for a selected ABAP symbol, equivalent to Eclipse ADT Go to Definition."""
+    return call_navigation_target(systemId, request)
+# endregion
+
 # region Info Repository
 @mcp.tool()
 def info_repository_search(systemId: str = Field(..., description="Identifier of the configured SAP system to query."),
@@ -3078,6 +3111,33 @@ def info_repository_search(systemId: str = Field(..., description="Identifier of
            objectType: str = Field("", description="Optional 4-character SAP object type filter such as PROG, CLAS, FUGR, TABL, DTEL, DOMA, INTF, or DDLS.")) -> InfoRepositorySearchResponse:
     """Search the SAP repository information system of one configured SAP system for development objects."""
     return call_info_repository_search(systemId, searchTerm, objectType=objectType)
+
+
+@mcp.tool()
+def info_repository_usage_references(
+    systemId: str = Field(..., description="Identifier of the configured SAP system to query."),
+    request: InfoRepositoryUsageReferencesRequest = Field(..., description="ADT source selection for the ABAP symbol whose where-used references should be resolved."),
+) -> InfoRepositoryUsageReferencesResponse:
+    """Run ADT where-used usageReferences for a selected ABAP symbol and return the reference tree plus snippet object identifiers."""
+    return call_info_repository_usage_references(systemId, request)
+
+
+@mcp.tool()
+def info_repository_usage_snippets(
+    systemId: str = Field(..., description="Identifier of the configured SAP system to query."),
+    request: InfoRepositoryUsageSnippetsRequest = Field(..., description="Usage reference object identifiers returned by info_repository_usage_references."),
+) -> InfoRepositoryUsageSnippetsResponse:
+    """Fetch ADT where-used source snippets for one or more usage reference object identifiers."""
+    return call_info_repository_usage_snippets(systemId, request)
+
+
+@mcp.tool()
+def info_repository_where_used(
+    systemId: str = Field(..., description="Identifier of the configured SAP system to query."),
+    request: InfoRepositoryUsageReferencesRequest = Field(..., description="ADT source selection for the ABAP symbol whose complete where-used result should be returned."),
+) -> InfoRepositoryWhereUsedResponse:
+    """Run a complete ADT where-used lookup by calling usageReferences and then usageSnippets automatically."""
+    return call_info_repository_where_used(systemId, request)
 # endregion
 
 # region Activation
