@@ -20,9 +20,12 @@ def test_compact_mode_exposes_only_capability_tools():
                 "abap_list_capabilities",
                 "abap_get_capability_spec",
                 "abap_call_capability",
+                "abap_skills_install",
             }
             assert "login" in server.CAPABILITY_TOOLS
             assert "sap_systems_list" in server.CAPABILITY_TOOLS
+            assert "internals_object_lock_probe" in server.CAPABILITY_TOOLS
+            assert "abap_skills_install" not in server.CAPABILITY_TOOLS
         finally:
             await server.configure_mcp_tool_mode("full")
 
@@ -74,6 +77,26 @@ def test_compact_capability_spec_returns_full_schema_on_demand():
     _run(scenario())
 
 
+def test_compact_capability_spec_includes_internals_object_lock_probe():
+    async def scenario():
+        try:
+            await server.configure_mcp_tool_mode("compact")
+
+            result = await server.mcp.call_tool(
+                "abap_get_capability_spec",
+                {"name": "internals_object_lock_probe"},
+            )
+
+            spec = result.structured_content
+            assert spec["name"] == "internals_object_lock_probe"
+            assert spec["category"] == "internals"
+            assert set(spec["inputSchema"]["required"]) == {"systemId", "objectUri"}
+        finally:
+            await server.configure_mcp_tool_mode("full")
+
+    _run(scenario())
+
+
 def test_compact_call_capability_delegates_to_original_tool():
     async def scenario():
         try:
@@ -101,7 +124,8 @@ def test_full_mode_restores_original_public_tools():
         assert mode == "full"
         assert len(tools) > 100
         assert "login" in {tool.name for tool in tools}
-        assert not ({tool.name for tool in tools} & server.COMPACT_TOOL_NAMES)
+        assert "abap_skills_install" in {tool.name for tool in tools}
+        assert not ({tool.name for tool in tools} & server.COMPACT_DISPATCHER_TOOL_NAMES)
 
     _run(scenario())
 

@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any, Callable
+from typing import Annotated, Any, Callable, Literal
 from urllib.parse import quote, unquote
 
 from dashboard.dashboard import (
@@ -43,6 +43,7 @@ from info_repository.info_repository import *
 from knowledge.knowledge import *
 from navigation.navigation import *
 from packages.packages import *
+from internals.internals import *
 from source.functions.includes import *
 from source.functions.fmodule import *
 from source.functions.groups import *
@@ -75,6 +76,12 @@ TOOL_MODE_ENV_VAR = "ABAP_MCP_TOOL_MODE"
 TOOL_MODE_FULL = "full"
 TOOL_MODE_COMPACT = "compact"
 COMPACT_TOOL_NAMES = {
+    "abap_list_capabilities",
+    "abap_get_capability_spec",
+    "abap_call_capability",
+    "abap_skills_install",
+}
+COMPACT_DISPATCHER_TOOL_NAMES = {
     "abap_list_capabilities",
     "abap_get_capability_spec",
     "abap_call_capability",
@@ -2122,6 +2129,32 @@ async def root_redirect(_request):
 def sap_systems_list() -> SapSystemListResponse:
     """List the SAP systems configured in the MCP server, including their ids, names, and environment types."""
     return call_sap_systems_list()
+# endregion
+
+# region Internals
+@mcp.tool()
+def abap_skills_install(
+    projectPath: str = Field(..., description="Absolute local project root path where the client project should be configured. The agent may infer this from the active workspace or user context."),
+    client: Literal["opencode"] = Field(..., description="Target client. The user must explicitly provide this value before calling the tool. Supported value in v1: opencode."),
+    scope: Literal["project"] = Field(..., description="Installation scope. The user must explicitly provide this value before calling the tool. Supported value in v1: project."),
+    overwrite: bool = Field(True, description="When true, replace previously installed supported SAP skills in the target project. Defaults to true."),
+) -> SkillsInstallResponse:
+    """Install bundled SAP skills into a supported client project.
+
+    In v1 this supports OpenCode project-level skills at
+    <projectPath>/.opencode/skills/<skill-name>/ and intentionally omits
+    agents/openai.yaml metadata from the installed copies.
+    """
+    return install_skills(projectPath, client, scope, overwrite)
+
+
+@mcp.tool()
+def internals_object_lock_probe(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the object lock should be probed."),
+    objectUri: str = Field(..., description="Absolute ADT object URI to lock and immediately unlock, for example /sap/bc/adt/programs/programs/ztest.")
+) -> ObjectLockProbeResponse:
+    """Lock and immediately unlock one ADT object URI to inspect the CTS request SAP reports for modifications."""
+    return probe_object_lock(systemId, objectUri)
 # endregion
 
 #region Login/Logout
@@ -4302,7 +4335,7 @@ async def _ensure_compact_capabilities_registered() -> None:
 async def _ensure_full_tools_registered() -> None:
     """Expose the original ABAP tools and hide the compact dispatcher tools."""
     public_tool_names = {tool.name for tool in await mcp.list_tools()}
-    for wrapper_name in sorted(COMPACT_TOOL_NAMES):
+    for wrapper_name in sorted(COMPACT_DISPATCHER_TOOL_NAMES):
         if wrapper_name in public_tool_names:
             _remove_public_tool(wrapper_name)
 

@@ -1,0 +1,3 @@
+display_name: SAP Local Git Guard
+short_description: Keep SAP source edits tracked in local Git.
+default_prompt: Use this skill before CRUD operations on SAP repository objects to prepare and maintain the local src Git repository.
