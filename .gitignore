@@ -26,5 +26,6 @@ tmp/
 .claude/
 
 # Runtime DB/cache
+.runtime/
 db/chroma/*.sqlite3
 db/chroma/*.sqlite3-*

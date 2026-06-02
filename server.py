@@ -44,6 +44,14 @@ from knowledge.knowledge import *
 from navigation.navigation import *
 from packages.packages import *
 from internals.internals import *
+from internals.workflows.engine import (
+    workflow_cancel as call_workflow_cancel,
+    workflow_continue as call_workflow_continue,
+    workflow_log as call_workflow_log,
+    workflow_start as call_workflow_start,
+    workflow_status as call_workflow_status,
+)
+from internals.workflows.models import WorkflowLogResponse, WorkflowResponse
 from source.functions.includes import *
 from source.functions.fmodule import *
 from source.functions.groups import *
@@ -55,6 +63,7 @@ from source.classes.classes import *
 from source.classes.testclasses import *
 from source.programs.programs import *
 from abapunit.abapunit import *
+from classrun.classrun import *
 from checkruns.checkruns import *
 from codecompletion.codecompletion import *
 from webgui.webgui import *
@@ -2155,6 +2164,50 @@ def internals_object_lock_probe(
 ) -> ObjectLockProbeResponse:
     """Lock and immediately unlock one ADT object URI to inspect the CTS request SAP reports for modifications."""
     return probe_object_lock(systemId, objectUri)
+
+
+@mcp.tool()
+def workflow_start(
+    workflow: str = Field(..., description="Workflow name to start. Supported value in v1: sap_repository_change."),
+    projectPath: str = Field(..., description="Absolute local project root path targeted by the workflow."),
+    task: str = Field(..., description="User task the workflow is coordinating."),
+    input: dict[str, Any] | None = Field(None, description="Optional initial workflow input JSON."),
+) -> WorkflowResponse:
+    """Start a persistent JSON-driven workflow and return the next agent instruction."""
+    return call_workflow_start(workflow, projectPath, task, input)
+
+
+@mcp.tool()
+def workflow_continue(
+    workflowId: str = Field(..., description="Workflow id returned by workflow_start."),
+    input: dict[str, Any] = Field(..., description="Input JSON matching the previous expectedInputSchema."),
+) -> WorkflowResponse:
+    """Continue a persistent workflow with agent-provided JSON input."""
+    return call_workflow_continue(workflowId, input)
+
+
+@mcp.tool()
+def workflow_status(
+    workflowId: str = Field(..., description="Workflow id returned by workflow_start."),
+) -> WorkflowResponse:
+    """Return the current status and last output for one workflow."""
+    return call_workflow_status(workflowId)
+
+
+@mcp.tool()
+def workflow_log(
+    workflowId: str = Field(..., description="Workflow id returned by workflow_start."),
+) -> WorkflowLogResponse:
+    """Return the persisted JSON event log for one workflow run."""
+    return call_workflow_log(workflowId)
+
+
+@mcp.tool()
+def workflow_cancel(
+    workflowId: str = Field(..., description="Workflow id returned by workflow_start."),
+) -> WorkflowResponse:
+    """Cancel a persistent workflow run and record the cancellation in the workflow log."""
+    return call_workflow_cancel(workflowId)
 # endregion
 
 #region Login/Logout
@@ -4177,6 +4230,21 @@ def datapreview_run_query_to_file(
 ) -> DataPreviewFileResponse:
     """Run a freestyle ABAP Open SQL data preview query and write the result to a local file."""
     return call_datapreview_run_query_to_file(systemId, sqlQuery, filePath, rowNumber, outputFormat)
+# endregion
+
+
+# region Class Run
+@mcp.tool()
+def classrun_run(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP class should be executed."),
+    className: str = Field(..., description="Technical name of the executable ABAP class to run, e.g. 'YJRS_RUN_TEST'.")
+) -> ClassRunResponse:
+    """Execute an ABAP class through the ADT classrun endpoint and return its plain-text console output.
+
+    This mirrors Eclipse ADT Run As > ABAP Application (Console) and performs
+    `POST /sap/bc/adt/oo/classrun/{className}` with `Accept: text/plain`.
+    Use it for classes that implement the runnable ABAP application entry point."""
+    return call_classrun_run(systemId, className)
 # endregion
 
 

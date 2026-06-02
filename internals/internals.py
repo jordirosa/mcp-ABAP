@@ -12,10 +12,7 @@ from generics import ApiResponse
 
 
 SUPPORTED_SKILL_NAMES = (
-    "sap-transport-scope-guard",
-    "sap-local-git-repository-guard",
     "sap-repository-change-orchestrator",
-    "sap-abap-unit-test-orchestrator",
 )
 
 INTERNAL_PATH_MARKERS = (

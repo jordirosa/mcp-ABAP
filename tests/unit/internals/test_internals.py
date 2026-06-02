@@ -28,6 +28,31 @@ def test_install_skills_copies_opencode_project_skills_without_agents(tmp_path):
         assert not (destination / "agents").exists()
 
 
+def test_installed_orchestrator_skill_only_points_to_workflow_capabilities(tmp_path):
+    project_path = tmp_path / "project"
+
+    response = install_skills(
+        projectPath=str(project_path),
+        client="opencode",
+        scope="project",
+    )
+
+    assert response.result is True
+    skill_text = (
+        project_path
+        / ".opencode"
+        / "skills"
+        / "sap-repository-change-orchestrator"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "workflow_start" in skill_text
+    assert "workflow_continue" in skill_text
+    assert "activation_activate" not in skill_text
+    assert "sap-local-git-repository-guard" not in skill_text
+    assert "sap-transport-scope-guard" not in skill_text
+
+
 def test_install_skills_replaces_existing_by_default(tmp_path):
     project_path = tmp_path / "project"
     destination = project_path / ".opencode" / "skills" / SUPPORTED_SKILL_NAMES[0]

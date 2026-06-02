@@ -25,6 +25,9 @@ def test_compact_mode_exposes_only_capability_tools():
             assert "login" in server.CAPABILITY_TOOLS
             assert "sap_systems_list" in server.CAPABILITY_TOOLS
             assert "internals_object_lock_probe" in server.CAPABILITY_TOOLS
+            assert "workflow_start" in server.CAPABILITY_TOOLS
+            assert "workflow_log" in server.CAPABILITY_TOOLS
+            assert "classrun_run" in server.CAPABILITY_TOOLS
             assert "abap_skills_install" not in server.CAPABILITY_TOOLS
         finally:
             await server.configure_mcp_tool_mode("full")
@@ -97,6 +100,47 @@ def test_compact_capability_spec_includes_internals_object_lock_probe():
     _run(scenario())
 
 
+def test_compact_capability_spec_includes_workflow_tools():
+    async def scenario():
+        try:
+            await server.configure_mcp_tool_mode("compact")
+
+            result = await server.mcp.call_tool(
+                "abap_get_capability_spec",
+                {"name": "workflow_start"},
+            )
+
+            spec = result.structured_content
+            assert spec["name"] == "workflow_start"
+            assert spec["category"] == "workflow"
+            assert set(spec["inputSchema"]["required"]) == {"workflow", "projectPath", "task"}
+        finally:
+            await server.configure_mcp_tool_mode("full")
+
+    _run(scenario())
+
+
+def test_compact_capability_spec_includes_classrun_run():
+    async def scenario():
+        try:
+            await server.configure_mcp_tool_mode("compact")
+
+            result = await server.mcp.call_tool(
+                "abap_get_capability_spec",
+                {"name": "classrun_run"},
+            )
+
+            spec = result.structured_content
+            assert spec["name"] == "classrun_run"
+            assert spec["category"] == "classrun"
+            assert set(spec["inputSchema"]["required"]) == {"systemId", "className"}
+            assert "ADT classrun endpoint" in spec["description"]
+        finally:
+            await server.configure_mcp_tool_mode("full")
+
+    _run(scenario())
+
+
 def test_compact_call_capability_delegates_to_original_tool():
     async def scenario():
         try:
@@ -125,6 +169,8 @@ def test_full_mode_restores_original_public_tools():
         assert len(tools) > 100
         assert "login" in {tool.name for tool in tools}
         assert "abap_skills_install" in {tool.name for tool in tools}
+        assert "workflow_start" in {tool.name for tool in tools}
+        assert "workflow_log" in {tool.name for tool in tools}
         assert not ({tool.name for tool in tools} & server.COMPACT_DISPATCHER_TOOL_NAMES)
 
     _run(scenario())
