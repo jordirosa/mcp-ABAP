@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any, Callable
+from typing import Annotated, Any, Callable, Literal
 from urllib.parse import quote, unquote
 
 from dashboard.dashboard import (
@@ -43,6 +43,15 @@ from info_repository.info_repository import *
 from knowledge.knowledge import *
 from navigation.navigation import *
 from packages.packages import *
+from internals.internals import *
+from internals.workflows.engine import (
+    workflow_cancel as call_workflow_cancel,
+    workflow_continue as call_workflow_continue,
+    workflow_log as call_workflow_log,
+    workflow_start as call_workflow_start,
+    workflow_status as call_workflow_status,
+)
+from internals.workflows.models import WorkflowLogResponse, WorkflowResponse
 from source.functions.includes import *
 from source.functions.fmodule import *
 from source.functions.groups import *
@@ -54,6 +63,7 @@ from source.classes.classes import *
 from source.classes.testclasses import *
 from source.programs.programs import *
 from abapunit.abapunit import *
+from classrun.classrun import *
 from checkruns.checkruns import *
 from codecompletion.codecompletion import *
 from webgui.webgui import *
@@ -75,6 +85,12 @@ TOOL_MODE_ENV_VAR = "ABAP_MCP_TOOL_MODE"
 TOOL_MODE_FULL = "full"
 TOOL_MODE_COMPACT = "compact"
 COMPACT_TOOL_NAMES = {
+    "abap_list_capabilities",
+    "abap_get_capability_spec",
+    "abap_call_capability",
+    "abap_skills_install",
+}
+COMPACT_DISPATCHER_TOOL_NAMES = {
     "abap_list_capabilities",
     "abap_get_capability_spec",
     "abap_call_capability",
@@ -2124,6 +2140,76 @@ def sap_systems_list() -> SapSystemListResponse:
     return call_sap_systems_list()
 # endregion
 
+# region Internals
+@mcp.tool()
+def abap_skills_install(
+    projectPath: str = Field(..., description="Absolute local project root path where the client project should be configured. The agent may infer this from the active workspace or user context."),
+    client: Literal["opencode"] = Field(..., description="Target client. The user must explicitly provide this value before calling the tool. Supported value in v1: opencode."),
+    scope: Literal["project"] = Field(..., description="Installation scope. The user must explicitly provide this value before calling the tool. Supported value in v1: project."),
+    overwrite: bool = Field(True, description="When true, replace previously installed supported SAP skills in the target project. Defaults to true."),
+) -> SkillsInstallResponse:
+    """Install bundled SAP skills into a supported client project.
+
+    In v1 this supports OpenCode project-level skills at
+    <projectPath>/.opencode/skills/<skill-name>/ and intentionally omits
+    agents/openai.yaml metadata from the installed copies.
+    """
+    return install_skills(projectPath, client, scope, overwrite)
+
+
+@mcp.tool()
+def internals_object_lock_probe(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the object lock should be probed."),
+    objectUri: str = Field(..., description="Absolute ADT object URI to lock and immediately unlock, for example /sap/bc/adt/programs/programs/ztest.")
+) -> ObjectLockProbeResponse:
+    """Lock and immediately unlock one ADT object URI to inspect the CTS request SAP reports for modifications."""
+    return probe_object_lock(systemId, objectUri)
+
+
+@mcp.tool()
+def workflow_start(
+    workflow: str = Field(..., description="Workflow name to start. Supported value in v1: sap_repository_change."),
+    projectPath: str = Field(..., description="Absolute local project root path targeted by the workflow."),
+    task: str = Field(..., description="User task the workflow is coordinating."),
+    input: dict[str, Any] | None = Field(None, description="Optional initial workflow input JSON."),
+) -> WorkflowResponse:
+    """Start a persistent JSON-driven workflow and return the next agent instruction."""
+    return call_workflow_start(workflow, projectPath, task, input)
+
+
+@mcp.tool()
+def workflow_continue(
+    workflowId: str = Field(..., description="Workflow id returned by workflow_start."),
+    input: dict[str, Any] = Field(..., description="Input JSON matching the previous expectedInputSchema."),
+) -> WorkflowResponse:
+    """Continue a persistent workflow with agent-provided JSON input."""
+    return call_workflow_continue(workflowId, input)
+
+
+@mcp.tool()
+def workflow_status(
+    workflowId: str = Field(..., description="Workflow id returned by workflow_start."),
+) -> WorkflowResponse:
+    """Return the current status and last output for one workflow."""
+    return call_workflow_status(workflowId)
+
+
+@mcp.tool()
+def workflow_log(
+    workflowId: str = Field(..., description="Workflow id returned by workflow_start."),
+) -> WorkflowLogResponse:
+    """Return the persisted JSON event log for one workflow run."""
+    return call_workflow_log(workflowId)
+
+
+@mcp.tool()
+def workflow_cancel(
+    workflowId: str = Field(..., description="Workflow id returned by workflow_start."),
+) -> WorkflowResponse:
+    """Cancel a persistent workflow run and record the cancellation in the workflow log."""
+    return call_workflow_cancel(workflowId)
+# endregion
+
 #region Login/Logout
 @mcp.tool()
 def login(
@@ -4147,6 +4233,21 @@ def datapreview_run_query_to_file(
 # endregion
 
 
+# region Class Run
+@mcp.tool()
+def classrun_run(
+    systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP class should be executed."),
+    className: str = Field(..., description="Technical name of the executable ABAP class to run, e.g. 'YJRS_RUN_TEST'.")
+) -> ClassRunResponse:
+    """Execute an ABAP class through the ADT classrun endpoint and return its plain-text console output.
+
+    This mirrors Eclipse ADT Run As > ABAP Application (Console) and performs
+    `POST /sap/bc/adt/oo/classrun/{className}` with `Accept: text/plain`.
+    Use it for classes that implement the runnable ABAP application entry point."""
+    return call_classrun_run(systemId, className)
+# endregion
+
+
 # region Check Runs
 @mcp.tool()
 def checkrun_syntax_check(
@@ -4302,7 +4403,7 @@ async def _ensure_compact_capabilities_registered() -> None:
 async def _ensure_full_tools_registered() -> None:
     """Expose the original ABAP tools and hide the compact dispatcher tools."""
     public_tool_names = {tool.name for tool in await mcp.list_tools()}
-    for wrapper_name in sorted(COMPACT_TOOL_NAMES):
+    for wrapper_name in sorted(COMPACT_DISPATCHER_TOOL_NAMES):
         if wrapper_name in public_tool_names:
             _remove_public_tool(wrapper_name)
 

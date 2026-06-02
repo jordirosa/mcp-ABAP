@@ -1,0 +1,4 @@
+interface:
+  display_name: "SAP Change Orchestrator"
+  short_description: "Coordinate SAP repository changes safely."
+  default_prompt: "Use this skill to plan, apply, activate, repair, and commit SAP repository object changes."

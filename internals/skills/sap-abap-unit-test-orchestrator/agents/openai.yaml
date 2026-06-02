@@ -1,0 +1,4 @@
+interface:
+  display_name: "SAP ABAP Unit Orchestrator"
+  short_description: "Plan and run isolated ABAP Unit tests."
+  default_prompt: "Use $sap-abap-unit-test-orchestrator to propose, implement, run, and report isolated ABAP Unit tests for the current SAP task."

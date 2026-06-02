@@ -1,0 +1,4 @@
+interface:
+  display_name: "SAP Transport Scope Guard"
+  short_description: "Keep SAP changes inside the allowed package and transport."
+  default_prompt: "Use $sap-transport-scope-guard to verify SAP package and transport scope before changing repository objects."
