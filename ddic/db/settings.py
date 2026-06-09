@@ -299,8 +299,8 @@ def call_ddic_table_db_settings_update(
 			"Accept": "application/vnd.sap.adt.table.settings.v1+xml, application/vnd.sap.adt.table.settings.v2+xml"
 		}
 		params = {"lockHandle": lockHandle}
-		if transportNumber:
-			params["corrNr"] = transportNumber
+		if str(transportNumber or "").strip():
+			params["corrNr"] = str(transportNumber).strip()
 		payload = _build_db_settings_update_payload(current_response.text, request)
 		response = get_session(systemId).put(url, headers=headers, params=params, data=payload.encode("utf-8"))
 
@@ -356,8 +356,8 @@ def call_ddic_table_db_settings_update_raw(
 			"Accept": "application/vnd.sap.adt.table.settings.v1+xml, application/vnd.sap.adt.table.settings.v2+xml"
 		}
 		params = {"lockHandle": lockHandle}
-		if transportNumber:
-			params["corrNr"] = transportNumber
+		if str(transportNumber or "").strip():
+			params["corrNr"] = str(transportNumber).strip()
 
 		response = get_session(systemId).put(url, headers=headers, params=params, data=rawXml.encode("utf-8"))
 		if response.status_code != 200:

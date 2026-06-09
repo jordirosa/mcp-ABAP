@@ -258,8 +258,8 @@ def call_ddic_table_create(
 			"Accept": "application/vnd.sap.adt.blues.v1+xml, application/vnd.sap.adt.tables.v2+xml"
 		}
 		params = {}
-		if transportNumber:
-			params["corrNr"] = transportNumber
+		if str(transportNumber or "").strip():
+			params["corrNr"] = str(transportNumber).strip()
 		payload = _build_table_create_payload(name, description, packageName, effective_responsible, effective_language)
 		response = get_session(systemId).post(url, headers=headers, params=params, data=payload.encode("utf-8"))
 
@@ -356,8 +356,8 @@ def call_ddic_table_update(
 			"Accept": "text/plain"
 		}
 		params = {"lockHandle": lockHandle}
-		if transportNumber:
-			params["corrNr"] = transportNumber
+		if str(transportNumber or "").strip():
+			params["corrNr"] = str(transportNumber).strip()
 
 		response = get_session(systemId).put(url, headers=headers, params=params, data=request.source.encode("utf-8"))
 		if response.status_code != 200:

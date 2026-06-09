@@ -246,8 +246,9 @@ def call_package_create(systemId: str, request: PackageCreateRequest, corrNr: st
         system_config = get_system_config(systemId)
         normalized_corrnr = str(corrNr or "").strip().upper()
         url = f"{system_config.server}{PACKAGES_COLLECTION_URI}"
+        params = {}
         if normalized_corrnr:
-            url = f"{url}?corrNr={normalized_corrnr}"
+            params["corrNr"] = normalized_corrnr
 
         response = get_session(systemId).post(
             url,
@@ -255,6 +256,7 @@ def call_package_create(systemId: str, request: PackageCreateRequest, corrNr: st
                 "Content-Type": PACKAGE_CONTENT_TYPE,
                 "Accept": PACKAGE_ACCEPT,
             },
+            params=params,
             data=_build_package_payload(
                 systemId,
                 name=normalized_name,

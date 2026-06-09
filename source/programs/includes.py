@@ -298,13 +298,15 @@ def call_include_create(systemId: str, request: IncludeCreateRequest, transportN
             "Content-Type": "application/vnd.sap.adt.programs.includes.v2+xml",
             "Accept": "application/xml",
         }
+        params = {}
         if str(transportNumber or "").strip():
-            headers["X-sap-adt-corrnr"] = str(transportNumber).strip()
+            params["corrNr"] = str(transportNumber).strip()
 
         payload = _build_include_create_payload(systemId, request)
         response = get_session(systemId).post(
             f"{system_config.server}{INCLUDES_COLLECTION_URI}",
             headers=headers,
+            params=params,
             data=payload.encode("utf-8"),
         )
 
@@ -434,12 +436,14 @@ def call_include_update(systemId: str, name: str, lockHandle: str, request: Incl
             "Content-Type": "text/plain; charset=utf-8",
             "Accept": "text/plain",
         }
+        params = {"lockHandle": normalized_lock_handle}
         if str(transportNumber or "").strip():
-            headers["X-sap-adt-corrnr"] = str(transportNumber).strip()
+            params["corrNr"] = str(transportNumber).strip()
 
         response = get_session(systemId).put(
-            f"{system_config.server}{source_uri}?lockHandle={quote(normalized_lock_handle, safe='')}",
+            f"{system_config.server}{source_uri}",
             headers=headers,
+            params=params,
             data=request.source.encode("utf-8"),
         )
 

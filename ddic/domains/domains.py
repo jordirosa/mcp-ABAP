@@ -393,8 +393,8 @@ def call_ddic_domain_create(
 			"Accept": "application/vnd.sap.adt.domains.v1+xml, application/vnd.sap.adt.domains.v2+xml"
 		}
 		params = {}
-		if transportNumber:
-			params["corrNr"] = transportNumber
+		if str(transportNumber or "").strip():
+			params["corrNr"] = str(transportNumber).strip()
 		payload = _build_domain_create_payload(
 			name=name,
 			description=description,
@@ -513,8 +513,8 @@ def call_ddic_domain_update(
 		params = {
 			"lockHandle": lockHandle
 		}
-		if transportNumber:
-			params["corrNr"] = transportNumber
+		if str(transportNumber or "").strip():
+			params["corrNr"] = str(transportNumber).strip()
 		payload = _build_domain_update_payload(
 			current_xml=current_response.text,
 			description=request.description,
@@ -588,8 +588,8 @@ def call_ddic_domain_update_raw(
 			"Accept": "application/vnd.sap.adt.domains.v1+xml, application/vnd.sap.adt.domains.v2+xml"
 		}
 		params = {"lockHandle": lockHandle}
-		if transportNumber:
-			params["corrNr"] = transportNumber
+		if str(transportNumber or "").strip():
+			params["corrNr"] = str(transportNumber).strip()
 
 		response = get_session(systemId).put(url, headers=headers, params=params, data=rawXml.encode("utf-8"))
 		if response.status_code != 200:

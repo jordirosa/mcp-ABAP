@@ -316,13 +316,15 @@ def call_program_create(systemId: str, request: ProgramCreateRequest, transportN
             "Content-Type": "application/vnd.sap.adt.programs.programs.v3+xml",
             "Accept": "application/xml",
         }
+        params = {}
         if str(transportNumber or "").strip():
-            headers["X-sap-adt-corrnr"] = str(transportNumber).strip()
+            params["corrNr"] = str(transportNumber).strip()
 
         payload = _build_program_create_payload(systemId, request)
         response = get_session(systemId).post(
             f"{system_config.server}{PROGRAMS_COLLECTION_URI}",
             headers=headers,
+            params=params,
             data=payload.encode("utf-8"),
         )
 
@@ -452,12 +454,14 @@ def call_program_update(systemId: str, name: str, lockHandle: str, request: Prog
             "Content-Type": "text/plain; charset=utf-8",
             "Accept": "text/plain",
         }
+        params = {"lockHandle": normalized_lock_handle}
         if str(transportNumber or "").strip():
-            headers["X-sap-adt-corrnr"] = str(transportNumber).strip()
+            params["corrNr"] = str(transportNumber).strip()
 
         response = get_session(systemId).put(
-            f"{system_config.server}{source_uri}?lockHandle={quote(normalized_lock_handle, safe='')}",
+            f"{system_config.server}{source_uri}",
             headers=headers,
+            params=params,
             data=request.source.encode("utf-8"),
         )
 

@@ -306,8 +306,9 @@ def call_ddic_ddl_source_create(
             "Content-Type": "application/vnd.sap.adt.ddlSource+xml",
             "Accept": "application/vnd.sap.adt.ddlSource.v2+xml, application/vnd.sap.adt.ddlSource+xml",
         }
+        params = {}
         if str(transportNumber or "").strip():
-            headers["X-sap-adt-corrnr"] = str(transportNumber).strip()
+            params["corrNr"] = str(transportNumber).strip()
 
         payload = _build_ddl_source_create_payload(
             name=normalized_name,
@@ -320,6 +321,7 @@ def call_ddic_ddl_source_create(
         response = get_session(systemId).post(
             f"{system_config.server}{DDL_SOURCES_COLLECTION_URI}",
             headers=headers,
+            params=params,
             data=payload.encode("utf-8"),
         )
 
@@ -454,12 +456,14 @@ def call_ddic_ddl_source_update(
             "Content-Type": "text/plain; charset=utf-8",
             "Accept": "text/plain",
         }
+        params = {"lockHandle": normalized_lock_handle}
         if str(transportNumber or "").strip():
-            headers["X-sap-adt-corrnr"] = str(transportNumber).strip()
+            params["corrNr"] = str(transportNumber).strip()
 
         response = get_session(systemId).put(
-            f"{system_config.server}{source_uri}?lockHandle={quote(normalized_lock_handle, safe='')}",
+            f"{system_config.server}{source_uri}",
             headers=headers,
+            params=params,
             data=request.source.encode("utf-8"),
         )
 
