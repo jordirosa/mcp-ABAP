@@ -2993,9 +2993,10 @@ def source_class_symbols_write_from_file(
 def source_class_testclasses_create(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the class testclasses include should be created."),
     className: str = Field(..., description="Technical ABAP class name that will own the testclasses include."),
+    transportNumber: str = Field("", description="Transport request number to forward when the class belongs to a transportable package."),
 ) -> ClassTestclassesCreateResponse:
     """Create the `testclasses` include of one existing ABAP class. The tool locks the class, creates the include, and unlocks it automatically."""
-    return call_class_testclasses_create(systemId, className)
+    return call_class_testclasses_create(systemId, className, transportNumber)
 
 
 @mcp.tool()
@@ -3012,9 +3013,10 @@ def source_class_testclasses_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the class testclasses include should be updated."),
     className: str = Field(..., description="Technical ABAP class name that owns the testclasses include."),
     request: ClassTestclassesUpdateRequest = Field(..., description="Full ABAP source code to store in the `testclasses` include."),
+    transportNumber: str = Field("", description="Transport request number to forward when the class belongs to a transportable package."),
 ) -> ClassTestclassesUpdateResponse:
     """Update the raw source code of the `testclasses` include of one ABAP class. The tool locks the class, writes the new source, and unlocks it automatically."""
-    return call_class_testclasses_update(systemId, className, request)
+    return call_class_testclasses_update(systemId, className, request, transportNumber)
 
 
 @mcp.tool()
@@ -3032,9 +3034,10 @@ def source_class_testclasses_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the class testclasses include should be updated."),
     className: str = Field(..., description="Technical ABAP class name that owns the testclasses include."),
     filePath: str = Field(..., description="Absolute local file path of the raw source code to upload."),
+    transportNumber: str = Field("", description="Transport request number to forward when the class belongs to a transportable package."),
 ) -> FileTransferResponse:
     """Upload the `testclasses` include of one ABAP class from a local file. The tool locks the class, writes the new source, and unlocks it automatically."""
-    return call_class_testclasses_write_from_file(systemId, className, filePath)
+    return call_class_testclasses_write_from_file(systemId, className, filePath, transportNumber)
 # endregion
 
 # region Programs

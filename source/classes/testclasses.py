@@ -89,7 +89,7 @@ def _build_testclasses_create_payload() -> str:
     return xmltodict.unparse(payload, pretty=False)
 
 
-def call_class_testclasses_create(systemId: str, className: str) -> ClassTestclassesCreateResponse:
+def call_class_testclasses_create(systemId: str, className: str, transportNumber: str = "") -> ClassTestclassesCreateResponse:
     """Create the testclasses include of one ABAP class."""
     try:
         is_logged_in, error_msg = ensure_login(systemId)
@@ -115,9 +115,13 @@ def call_class_testclasses_create(systemId: str, className: str) -> ClassTestcla
 
         try:
             system_config = get_system_config(systemId)
+            params = {"lockHandle": lock_response.data.lockHandle}
+            if str(transportNumber or "").strip():
+                params["corrNr"] = str(transportNumber).strip()
             response = get_session(systemId).post(
-                f"{system_config.server}{_class_testclasses_collection_uri(normalized_name)}?lockHandle={lock_response.data.lockHandle}",
+                f"{system_config.server}{_class_testclasses_collection_uri(normalized_name)}",
                 headers={"Content-Type": CLASS_INCLUDE_CONTENT_TYPE, "Accept": "application/xml"},
+                params=params,
                 data=_build_testclasses_create_payload().encode("utf-8"),
             )
         finally:
@@ -224,7 +228,12 @@ def call_class_testclasses_read(systemId: str, className: str) -> ClassTestclass
         })
 
 
-def call_class_testclasses_update(systemId: str, className: str, request: ClassTestclassesUpdateRequest) -> ClassTestclassesUpdateResponse:
+def call_class_testclasses_update(
+    systemId: str,
+    className: str,
+    request: ClassTestclassesUpdateRequest,
+    transportNumber: str = "",
+) -> ClassTestclassesUpdateResponse:
     """Update the raw source code of the testclasses include of one ABAP class."""
     try:
         normalized_name = _normalize_class_name(className)
@@ -241,9 +250,13 @@ def call_class_testclasses_update(systemId: str, className: str, request: ClassT
         try:
             system_config = get_system_config(systemId)
             source_uri = _class_testclasses_source_uri(normalized_name)
+            params = {"lockHandle": lock_response.data.lockHandle}
+            if str(transportNumber or "").strip():
+                params["corrNr"] = str(transportNumber).strip()
             response = get_session(systemId).put(
-                f"{system_config.server}{source_uri}?lockHandle={lock_response.data.lockHandle}",
+                f"{system_config.server}{source_uri}",
                 headers={"Content-Type": "text/plain; charset=utf-8", "Accept": "text/plain"},
+                params=params,
                 data=request.source.encode("utf-8"),
             )
         finally:
@@ -312,11 +325,21 @@ def call_class_testclasses_read_to_file(systemId: str, className: str, filePath:
         return build_file_transfer_error(f"Failed to download the class testclasses include to file: {str(exc)}")
 
 
-def call_class_testclasses_write_from_file(systemId: str, className: str, filePath: str) -> FileTransferResponse:
+def call_class_testclasses_write_from_file(
+    systemId: str,
+    className: str,
+    filePath: str,
+    transportNumber: str = "",
+) -> FileTransferResponse:
     """Upload the testclasses include of one ABAP class from a local file."""
     try:
         content, size_bytes = read_text_file(filePath)
-        response = call_class_testclasses_update(systemId, className, ClassTestclassesUpdateRequest(source=content))
+        response = call_class_testclasses_update(
+            systemId,
+            className,
+            ClassTestclassesUpdateRequest(source=content),
+            transportNumber,
+        )
         if not response.result or not response.data:
             return build_file_transfer_error(
                 response.message or "Failed to upload the class testclasses include from file.",
