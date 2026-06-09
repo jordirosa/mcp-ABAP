@@ -176,6 +176,99 @@ def test_full_mode_restores_original_public_tools():
     _run(scenario())
 
 
+def test_high_level_mutation_schemas_warn_that_locking_is_internal():
+    async def scenario():
+        tools = {tool.name: tool for tool in await server.mcp.list_tools()}
+        parameter_by_tool = {
+            "source_program_include_update": "name",
+            "source_program_include_write_from_file": "name",
+            "source_function_include_update": "name",
+            "source_function_include_write_from_file": "name",
+            "source_function_module_update": "name",
+            "source_function_module_write_from_file": "name",
+            "source_function_group_update": "name",
+            "source_function_group_write_from_file": "name",
+            "source_function_group_symbols_update": "name",
+            "source_function_group_symbols_write_from_file": "name",
+            "source_interface_update": "name",
+            "source_interface_write_from_file": "name",
+            "source_class_update": "name",
+            "source_class_write_from_file": "name",
+            "source_class_symbols_update": "name",
+            "source_class_symbols_write_from_file": "name",
+            "source_class_testclasses_create": "className",
+            "source_class_testclasses_update": "className",
+            "source_class_testclasses_write_from_file": "className",
+            "source_program_update": "name",
+            "source_program_write_from_file": "name",
+            "source_program_symbols_update": "name",
+            "source_program_symbols_write_from_file": "name",
+            "cts_transport_update": "transportNumber",
+            "cts_transport_write_from_file": "transportNumber",
+            "package_update": "name",
+            "ddic_table_db_settings_update": "tableName",
+            "ddic_table_db_settings_write_from_file": "tableName",
+            "ddic_table_update": "name",
+            "ddic_table_write_from_file": "name",
+            "ddic_dataelement_update": "name",
+            "ddic_dataelement_write_from_file": "name",
+            "ddic_domain_update": "name",
+            "ddic_domain_write_from_file": "name",
+            "ddic_ddl_source_update": "name",
+            "ddic_ddl_source_write_from_file": "name",
+        }
+
+        for tool_name, parameter_name in parameter_by_tool.items():
+            description = tools[tool_name].parameters["properties"][parameter_name]["description"]
+            assert "internally" in description
+            assert "do not call" in description or "do not perform" in description
+
+    _run(scenario())
+
+
+def test_low_level_lock_schemas_warn_against_redundant_locking():
+    async def scenario():
+        tools = {tool.name: tool for tool in await server.mcp.list_tools()}
+        parameter_by_tool = {
+            "source_program_include_lock": "name",
+            "source_function_include_lock": "name",
+            "source_function_module_lock": "name",
+            "source_function_group_lock": "name",
+            "source_interface_lock": "name",
+            "source_class_lock": "name",
+            "source_program_lock": "name",
+            "ddic_ddl_source_lock": "name",
+        }
+
+        for tool_name, parameter_name in parameter_by_tool.items():
+            description = tools[tool_name].parameters["properties"][parameter_name]["description"]
+            assert "Low-level operation for manual workflows only" in description
+            assert "manage locking internally" in description
+
+    _run(scenario())
+
+
+def test_testclasses_tool_schemas_explain_agent_creation_workflow():
+    async def scenario():
+        tools = {tool.name: tool for tool in await server.mcp.list_tools()}
+        create_tool = tools["source_class_testclasses_create"]
+        create_class_description = create_tool.parameters["properties"]["className"]["description"]
+        create_transport_description = create_tool.parameters["properties"]["transportNumber"]["description"]
+        read_class_description = tools["source_class_testclasses_read"].parameters["properties"]["className"]["description"]
+        update_class_description = tools["source_class_testclasses_update"].parameters["properties"]["className"]["description"]
+        write_class_description = tools["source_class_testclasses_write_from_file"].parameters["properties"]["className"]["description"]
+
+        assert "source_class_testclasses_read confirms that the include does not exist" in create_class_description
+        assert "cannot be locked before it exists" in create_class_description
+        assert "source_class_testclasses_update or source_class_testclasses_write_from_file" in create_class_description
+        assert "creation and again during the subsequent update" in create_transport_description
+        assert "determine whether they must create the include first" in read_class_description
+        assert "call source_class_testclasses_create once first" in update_class_description
+        assert "call source_class_testclasses_create once first" in write_class_description
+
+    _run(scenario())
+
+
 def test_invalid_tool_mode_is_rejected():
     with pytest.raises(ValueError, match="ABAP_MCP_TOOL_MODE"):
         server._normalize_tool_mode("wide")

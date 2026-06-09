@@ -1,12 +1,20 @@
 import xmltodict
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field
 
 from configuration import get_session, get_system_config
-from connection.connection import ensure_login
+from connection.connection import build_adt_headers, ensure_login
 from generics import ApiResponse, FileTransferResponse
 from utils import build_file_transfer_error, build_file_transfer_response, read_text_file, write_text_file
-from source.classes.classes import _class_object_uri, _normalize_class_name, call_class_lock, call_class_unlock
+from source.classes.classes import (
+    ClassLockOutput,
+    ClassLockResponse,
+    _class_object_uri,
+    _normalize_class_name,
+    call_class_lock,
+    call_class_unlock,
+)
 
 
 CLASS_INCLUDE_CONTENT_TYPE = "application/vnd.sap.adt.oo.classincludes+xml"
@@ -87,6 +95,148 @@ def _build_testclasses_create_payload() -> str:
         }
     }
     return xmltodict.unparse(payload, pretty=False)
+
+
+def call_class_testclasses_lock(systemId: str, className: str) -> ClassLockResponse:
+    """Lock the testclasses include of one ABAP class through its own ADT resource."""
+    try:
+        is_logged_in, error_msg = ensure_login(systemId)
+        if not is_logged_in:
+            return ClassLockResponse.model_validate({
+                "result": False,
+                "httpCode": 401,
+                "httpReason": "Unauthorized",
+                "message": f"Cannot lock the class testclasses include because no SAP session is available: {error_msg}",
+                "data": None,
+            })
+
+        normalized_name = _normalize_class_name(className)
+        object_uri = _class_testclasses_object_uri(normalized_name)
+        system_config = get_system_config(systemId)
+        headers = build_adt_headers(
+            sessionType="stateful",
+            extra={
+                "Accept": "application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result;q=0.8, application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result2;q=0.9"
+            },
+        )
+        response = get_session(systemId).post(
+            f"{system_config.server}{object_uri}?_action=LOCK&accessMode=MODIFY",
+            headers=headers,
+        )
+
+        if response.status_code != 200:
+            return ClassLockResponse.model_validate({
+                "result": False,
+                "httpCode": response.status_code,
+                "httpReason": response.reason,
+                "message": f"ADT rejected the class testclasses lock request: {response.text}",
+                "data": None,
+            })
+
+        parsed = xmltodict.parse(response.text)
+        data = (((parsed.get("asx:abap", {}) or {}).get("asx:values", {}) or {}).get("DATA", {}) or {})
+        lock_handle = str(data.get("LOCK_HANDLE", "") or "")
+        if not lock_handle:
+            raise ValueError("SAP did not return a lock handle for the class testclasses include.")
+
+        return ClassLockResponse.model_validate({
+            "result": True,
+            "httpCode": response.status_code,
+            "httpReason": response.reason,
+            "message": "Class testclasses include locked successfully.",
+            "data": ClassLockOutput(
+                uri=object_uri,
+                name=normalized_name,
+                lockHandle=lock_handle,
+                corrnr=str(data.get("CORRNR", "") or ""),
+                corruser=str(data.get("CORRUSER", "") or ""),
+                corrtext=str(data.get("CORRTEXT", "") or ""),
+                isLocal=str(data.get("IS_LOCAL", "") or "").upper() == "X",
+            ),
+        })
+    except ValueError as exc:
+        return ClassLockResponse.model_validate({
+            "result": False,
+            "httpCode": 400,
+            "httpReason": "Bad Request",
+            "message": str(exc),
+            "data": None,
+        })
+    except Exception as exc:
+        return ClassLockResponse.model_validate({
+            "result": False,
+            "httpCode": 500,
+            "httpReason": "Internal Server Error",
+            "message": f"Unexpected error while locking the class testclasses include: {str(exc)}",
+            "data": None,
+        })
+
+
+def call_class_testclasses_unlock(systemId: str, className: str, lockHandle: str) -> ClassLockResponse:
+    """Unlock the testclasses include of one ABAP class through its own ADT resource."""
+    try:
+        is_logged_in, error_msg = ensure_login(systemId)
+        if not is_logged_in:
+            return ClassLockResponse.model_validate({
+                "result": False,
+                "httpCode": 401,
+                "httpReason": "Unauthorized",
+                "message": f"Cannot unlock the class testclasses include because no SAP session is available: {error_msg}",
+                "data": None,
+            })
+
+        normalized_name = _normalize_class_name(className)
+        normalized_lock_handle = str(lockHandle or "").strip()
+        if not normalized_lock_handle:
+            raise ValueError("lockHandle is required.")
+
+        object_uri = _class_testclasses_object_uri(normalized_name)
+        system_config = get_system_config(systemId)
+        response = get_session(systemId).post(
+            f"{system_config.server}{object_uri}?_action=UNLOCK&lockHandle={quote(normalized_lock_handle, safe='')}",
+            headers=build_adt_headers(sessionType="stateful"),
+        )
+
+        if response.status_code != 200:
+            return ClassLockResponse.model_validate({
+                "result": False,
+                "httpCode": response.status_code,
+                "httpReason": response.reason,
+                "message": f"ADT rejected the class testclasses unlock request: {response.text}",
+                "data": None,
+            })
+
+        return ClassLockResponse.model_validate({
+            "result": True,
+            "httpCode": response.status_code,
+            "httpReason": response.reason,
+            "message": "Class testclasses include unlocked successfully.",
+            "data": ClassLockOutput(
+                uri=object_uri,
+                name=normalized_name,
+                lockHandle=normalized_lock_handle,
+                corrnr="",
+                corruser="",
+                corrtext="",
+                isLocal=False,
+            ),
+        })
+    except ValueError as exc:
+        return ClassLockResponse.model_validate({
+            "result": False,
+            "httpCode": 400,
+            "httpReason": "Bad Request",
+            "message": str(exc),
+            "data": None,
+        })
+    except Exception as exc:
+        return ClassLockResponse.model_validate({
+            "result": False,
+            "httpCode": 500,
+            "httpReason": "Internal Server Error",
+            "message": f"Unexpected error while unlocking the class testclasses include: {str(exc)}",
+            "data": None,
+        })
 
 
 def call_class_testclasses_create(systemId: str, className: str, transportNumber: str = "") -> ClassTestclassesCreateResponse:
@@ -237,13 +387,13 @@ def call_class_testclasses_update(
     """Update the raw source code of the testclasses include of one ABAP class."""
     try:
         normalized_name = _normalize_class_name(className)
-        lock_response = call_class_lock(systemId, normalized_name)
+        lock_response = call_class_testclasses_lock(systemId, normalized_name)
         if not lock_response.result or not lock_response.data:
             return ClassTestclassesUpdateResponse.model_validate({
                 "result": False,
                 "httpCode": lock_response.httpCode,
                 "httpReason": lock_response.httpReason,
-                "message": lock_response.message or "Failed to lock the class.",
+                "message": lock_response.message or "Failed to lock the class testclasses include.",
                 "data": None
             })
 
@@ -260,7 +410,7 @@ def call_class_testclasses_update(
                 data=request.source.encode("utf-8"),
             )
         finally:
-            call_class_unlock(systemId, normalized_name, lock_response.data.lockHandle)
+            call_class_testclasses_unlock(systemId, normalized_name, lock_response.data.lockHandle)
 
         if response.status_code not in {200, 204}:
             return ClassTestclassesUpdateResponse.model_validate({

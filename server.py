@@ -2364,7 +2364,7 @@ def source_program_include_read(
 @mcp.tool()
 def source_program_include_lock(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP include should be locked."),
-    name: str = Field(..., description="Technical ABAP include name to lock.")
+    name: str = Field(..., description="Technical ABAP include name to lock. Low-level operation for manual workflows only; do not call it before source_program_include_update or source_program_include_write_from_file because those tools manage locking internally.")
 ) -> IncludeLockResponse:
     """Lock one ABAP include through the ADT lock action and return the lock handle required for raw source updates."""
     return call_include_lock(systemId, name)
@@ -2383,7 +2383,7 @@ def source_program_include_unlock(
 @mcp.tool()
 def source_program_include_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP include source should be updated."),
-    name: str = Field(..., description="Technical ABAP include name to update."),
+    name: str = Field(..., description="Technical ABAP include name to update. This tool manages the required lock and unlock internally; do not call the separate lock or unlock tools before or after it."),
     request: IncludeUpdateRequest = Field(..., description="Full ABAP source code to store in the include source."),
     transportNumber: str = Field("", description="Transport request number to forward when the include belongs to a transportable package.")
 ) -> IncludeUpdateResponse:
@@ -2427,7 +2427,7 @@ def source_program_include_read_to_file(
 @mcp.tool()
 def source_program_include_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP include source should be updated."),
-    name: str = Field(..., description="Technical ABAP include name to update."),
+    name: str = Field(..., description="Technical ABAP include name to update. This tool manages the required lock and unlock internally; do not call the separate lock or unlock tools before or after it."),
     filePath: str = Field(..., description="Absolute local file path of the raw source code to upload."),
     transportNumber: str = Field("", description="Transport request number to forward when the include belongs to a transportable package.")
 ) -> FileTransferResponse:
@@ -2459,7 +2459,7 @@ def source_function_include_read(
 def source_function_include_lock(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the function group include should be locked."),
     functionGroupName: str = Field(..., description="Technical ABAP function group name that owns the include."),
-    name: str = Field(..., description="Technical ABAP function group include name to lock.")
+    name: str = Field(..., description="Technical ABAP function group include name to lock. Low-level operation for manual workflows only; do not call it before source_function_include_update or source_function_include_write_from_file because those tools manage locking internally.")
 ) -> FunctionIncludeLockResponse:
     """Lock one function group include through the ADT lock action and return the lock handle required for raw source updates."""
     return call_function_include_lock(systemId, functionGroupName, name)
@@ -2480,7 +2480,7 @@ def source_function_include_unlock(
 def source_function_include_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the function group include source should be updated."),
     functionGroupName: str = Field(..., description="Technical ABAP function group name that owns the include."),
-    name: str = Field(..., description="Technical ABAP function group include name to update."),
+    name: str = Field(..., description="Technical ABAP function group include name to update. This tool manages the required lock and unlock internally; do not call the separate lock or unlock tools before or after it."),
     request: FunctionIncludeUpdateRequest = Field(..., description="Full ABAP source code to store in the include source."),
 ) -> FunctionIncludeUpdateResponse:
     """Update the raw source code of one function group include through its `/source/main` endpoint. The tool locks the include, writes the new source, and unlocks it automatically."""
@@ -2525,7 +2525,7 @@ def source_function_include_read_to_file(
 def source_function_include_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the function group include source should be updated."),
     functionGroupName: str = Field(..., description="Technical ABAP function group name that owns the include."),
-    name: str = Field(..., description="Technical ABAP function group include name to update."),
+    name: str = Field(..., description="Technical ABAP function group include name to update. This tool manages the required lock and unlock internally; do not call the separate lock or unlock tools before or after it."),
     filePath: str = Field(..., description="Absolute local file path of the raw source code to upload."),
 ) -> FileTransferResponse:
     """Upload raw ABAP source code from a local file to one existing function group include through its `/source/main` endpoint. The tool locks the include, writes the new source, and unlocks it automatically."""
@@ -2556,7 +2556,7 @@ def source_function_module_read(
 def source_function_module_lock(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP function module should be locked."),
     functionGroupName: str = Field(..., description="Technical ABAP function group name that owns the module."),
-    name: str = Field(..., description="Technical ABAP function module name to lock.")
+    name: str = Field(..., description="Technical ABAP function module name to lock. Low-level operation for manual workflows only; do not call it before source_function_module_update or source_function_module_write_from_file because those tools manage locking internally.")
 ) -> FunctionModuleLockResponse:
     """Lock one ABAP function module through the ADT lock action and return the lock handle required for raw source updates."""
     return call_function_module_lock(systemId, functionGroupName, name)
@@ -2577,7 +2577,7 @@ def source_function_module_unlock(
 def source_function_module_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP function module source should be updated."),
     functionGroupName: str = Field(..., description="Technical ABAP function group name that owns the module."),
-    name: str = Field(..., description="Technical ABAP function module name to update."),
+    name: str = Field(..., description="Technical ABAP function module name to update. This tool manages the required lock and unlock internally; do not call the separate lock or unlock tools before or after it."),
     request: FunctionModuleUpdateRequest = Field(..., description="Full ABAP source code to store in the function module source."),
 ) -> FunctionModuleUpdateResponse:
     """Update the raw source code of one ABAP function module through its `/source/main` endpoint. The tool locks the function module, writes the new source, and unlocks it automatically."""
@@ -2622,7 +2622,7 @@ def source_function_module_read_to_file(
 def source_function_module_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP function module source should be updated."),
     functionGroupName: str = Field(..., description="Technical ABAP function group name that owns the module."),
-    name: str = Field(..., description="Technical ABAP function module name to update."),
+    name: str = Field(..., description="Technical ABAP function module name to update. This tool manages the required lock and unlock internally; do not call the separate lock or unlock tools before or after it."),
     filePath: str = Field(..., description="Absolute local file path of the raw source code to upload."),
 ) -> FileTransferResponse:
     """Upload raw ABAP source code from a local file to one existing function module through its `/source/main` endpoint. The tool locks the function module, writes the new source, and unlocks it automatically."""
@@ -2652,7 +2652,7 @@ def source_function_group_read(
 @mcp.tool()
 def source_function_group_lock(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP function group should be locked."),
-    name: str = Field(..., description="Technical ABAP function group name to lock.")
+    name: str = Field(..., description="Technical ABAP function group name to lock. Low-level operation for manual workflows only; do not call it before source_function_group_update or source_function_group_write_from_file because those tools manage locking internally.")
 ) -> FunctionGroupLockResponse:
     """Lock one ABAP function group through the ADT lock action and return the lock handle required for raw source updates."""
     return call_function_group_lock(systemId, name)
@@ -2671,7 +2671,7 @@ def source_function_group_unlock(
 @mcp.tool()
 def source_function_group_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP function group source should be updated."),
-    name: str = Field(..., description="Technical ABAP function group name to update."),
+    name: str = Field(..., description="Technical ABAP function group name to update. This tool manages the required lock and unlock internally; do not call the separate lock or unlock tools before or after it."),
     request: FunctionGroupUpdateRequest = Field(..., description="Full ABAP source code to store in the function group source."),
     transportNumber: str = Field("", description="Transport request number to forward when the function group belongs to a transportable package.")
 ) -> FunctionGroupUpdateResponse:
@@ -2715,7 +2715,7 @@ def source_function_group_read_to_file(
 @mcp.tool()
 def source_function_group_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP function group source should be updated."),
-    name: str = Field(..., description="Technical ABAP function group name to update."),
+    name: str = Field(..., description="Technical ABAP function group name to update. This tool manages the required lock and unlock internally; do not call the separate lock or unlock tools before or after it."),
     filePath: str = Field(..., description="Absolute local file path of the raw source code to upload."),
     transportNumber: str = Field("", description="Transport request number to forward when the function group belongs to a transportable package.")
 ) -> FileTransferResponse:
@@ -2735,7 +2735,7 @@ def source_function_group_symbols_read(
 @mcp.tool()
 def source_function_group_symbols_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the function group text symbols should be updated."),
-    name: str = Field(..., description="Technical ABAP function group name whose text symbols should be updated."),
+    name: str = Field(..., description="Technical ABAP function group name whose text symbols should be updated. This tool manages the required symbols-resource lock and unlock internally; do not call separate lock or unlock tools."),
     request: SourceSymbolsUpdateRequest = Field(..., description="Full text symbols content to store in the function group symbols resource."),
 ) -> SourceSymbolsUpdateResponse:
     """Update the text symbols of one ABAP function group through its `/source/symbols` endpoint. The tool locks the function group, writes the new symbols, and unlocks it automatically."""
@@ -2755,7 +2755,7 @@ def source_function_group_symbols_read_to_file(
 @mcp.tool()
 def source_function_group_symbols_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the function group text symbols should be updated."),
-    name: str = Field(..., description="Technical ABAP function group name whose text symbols should be updated."),
+    name: str = Field(..., description="Technical ABAP function group name whose text symbols should be updated. This tool manages the required symbols-resource lock and unlock internally; do not call separate lock or unlock tools."),
     filePath: str = Field(..., description="Absolute local file path of the raw text symbols to upload."),
 ) -> FileTransferResponse:
     """Upload text symbols from a local file to one existing ABAP function group through its `/source/symbols` endpoint. The tool locks the function group, writes the new symbols, and unlocks it automatically."""
@@ -2785,7 +2785,7 @@ def source_interface_read(
 @mcp.tool()
 def source_interface_lock(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP interface should be locked."),
-    name: str = Field(..., description="Technical ABAP interface name to lock.")
+    name: str = Field(..., description="Technical ABAP interface name to lock. Low-level operation for manual workflows only; do not call it before source_interface_update or source_interface_write_from_file because those tools manage locking internally.")
 ) -> InterfaceLockResponse:
     """Lock one ABAP interface through the ADT lock action and return the lock handle required for raw source updates."""
     return call_interface_lock(systemId, name)
@@ -2804,7 +2804,7 @@ def source_interface_unlock(
 @mcp.tool()
 def source_interface_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP interface source should be updated."),
-    name: str = Field(..., description="Technical ABAP interface name to update."),
+    name: str = Field(..., description="Technical ABAP interface name to update. This tool manages the required lock and unlock internally; do not call the separate lock or unlock tools before or after it."),
     request: InterfaceUpdateRequest = Field(..., description="Full ABAP source code to store in the interface source."),
     transportNumber: str = Field("", description="Transport request number to forward when the interface belongs to a transportable package.")
 ) -> InterfaceUpdateResponse:
@@ -2848,7 +2848,7 @@ def source_interface_read_to_file(
 @mcp.tool()
 def source_interface_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP interface source should be updated."),
-    name: str = Field(..., description="Technical ABAP interface name to update."),
+    name: str = Field(..., description="Technical ABAP interface name to update. This tool manages the required lock and unlock internally; do not call the separate lock or unlock tools before or after it."),
     filePath: str = Field(..., description="Absolute local file path of the raw source code to upload."),
     transportNumber: str = Field("", description="Transport request number to forward when the interface belongs to a transportable package.")
 ) -> FileTransferResponse:
@@ -2879,7 +2879,7 @@ def source_class_read(
 @mcp.tool()
 def source_class_lock(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP class should be locked."),
-    name: str = Field(..., description="Technical ABAP class name to lock.")
+    name: str = Field(..., description="Technical ABAP class name to lock. Low-level operation for manual workflows only; do not call it before source_class_update, source_class_write_from_file, symbols, or testclasses mutation tools because those tools manage locking internally.")
 ) -> ClassLockResponse:
     """Lock one ABAP class through the ADT lock action and return the lock handle required for raw source updates."""
     return call_class_lock(systemId, name)
@@ -2898,7 +2898,7 @@ def source_class_unlock(
 @mcp.tool()
 def source_class_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP class source should be updated."),
-    name: str = Field(..., description="Technical ABAP class name to update."),
+    name: str = Field(..., description="Technical ABAP class name to update. This tool manages the required lock and unlock internally; do not call source_class_lock or source_class_unlock before or after it."),
     request: ClassUpdateRequest = Field(..., description="Full ABAP source code to store in the class source."),
     transportNumber: str = Field("", description="Transport request number to forward when the class belongs to a transportable package.")
 ) -> ClassUpdateResponse:
@@ -2942,7 +2942,7 @@ def source_class_read_to_file(
 @mcp.tool()
 def source_class_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP class source should be updated."),
-    name: str = Field(..., description="Technical ABAP class name to update."),
+    name: str = Field(..., description="Technical ABAP class name to update. This tool manages the required lock and unlock internally; do not call source_class_lock or source_class_unlock before or after it."),
     filePath: str = Field(..., description="Absolute local file path of the raw source code to upload."),
     transportNumber: str = Field("", description="Transport request number to forward when the class belongs to a transportable package.")
 ) -> FileTransferResponse:
@@ -2962,7 +2962,7 @@ def source_class_symbols_read(
 @mcp.tool()
 def source_class_symbols_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP class text symbols should be updated."),
-    name: str = Field(..., description="Technical ABAP class name whose text symbols should be updated."),
+    name: str = Field(..., description="Technical ABAP class name whose text symbols should be updated. This tool manages the required symbols-resource lock and unlock internally; do not call source_class_lock or source_class_unlock."),
     request: SourceSymbolsUpdateRequest = Field(..., description="Full text symbols content to store in the class symbols resource."),
 ) -> SourceSymbolsUpdateResponse:
     """Update the text symbols of one ABAP class through its `/source/symbols` endpoint. The tool locks the class, writes the new symbols, and unlocks it automatically."""
@@ -2982,7 +2982,7 @@ def source_class_symbols_read_to_file(
 @mcp.tool()
 def source_class_symbols_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP class text symbols should be updated."),
-    name: str = Field(..., description="Technical ABAP class name whose text symbols should be updated."),
+    name: str = Field(..., description="Technical ABAP class name whose text symbols should be updated. This tool manages the required symbols-resource lock and unlock internally; do not call source_class_lock or source_class_unlock."),
     filePath: str = Field(..., description="Absolute local file path of the raw text symbols to upload."),
 ) -> FileTransferResponse:
     """Upload text symbols from a local file to one existing ABAP class through its `/source/symbols` endpoint. The tool locks the class, writes the new symbols, and unlocks it automatically."""
@@ -2992,30 +2992,30 @@ def source_class_symbols_write_from_file(
 @mcp.tool()
 def source_class_testclasses_create(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the class testclasses include should be created."),
-    className: str = Field(..., description="Technical ABAP class name that will own the testclasses include."),
-    transportNumber: str = Field("", description="Transport request number to forward when the class belongs to a transportable package."),
+    className: str = Field(..., description="Technical ABAP class name that will own the testclasses include. Use this tool only when source_class_testclasses_read confirms that the include does not exist. Creation locks and unlocks the parent class internally because the testclasses include cannot be locked before it exists; do not call source_class_lock or source_class_unlock. After creation, call source_class_testclasses_update or source_class_testclasses_write_from_file to store the test source."),
+    transportNumber: str = Field("", description="Transport request number to forward when the class belongs to a transportable package. Supply it during creation and again during the subsequent update when SAP requires the change to be recorded in a transport."),
 ) -> ClassTestclassesCreateResponse:
-    """Create the `testclasses` include of one existing ABAP class. The tool locks the class, creates the include, and unlocks it automatically."""
+    """Create the empty `testclasses` include of one existing ABAP class. Agent workflow: read first; if the include is missing, call this tool once and then call update or write-from-file with the test source. Do not call manual lock or unlock tools: creation locks the parent class internally because the include does not exist yet."""
     return call_class_testclasses_create(systemId, className, transportNumber)
 
 
 @mcp.tool()
 def source_class_testclasses_read(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the class testclasses include should be read."),
-    className: str = Field(..., description="Technical ABAP class name that owns the testclasses include."),
+    className: str = Field(..., description="Technical ABAP class name that owns the testclasses include. Agents can call this before writing to determine whether they must create the include first."),
 ) -> ClassTestclassesReadResponse:
-    """Read the raw source code of the `testclasses` include of one ABAP class from its direct include resource."""
+    """Read the raw source code of the `testclasses` include of one ABAP class. If it is missing, call create once before update or write-from-file."""
     return call_class_testclasses_read(systemId, className)
 
 
 @mcp.tool()
 def source_class_testclasses_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the class testclasses include should be updated."),
-    className: str = Field(..., description="Technical ABAP class name that owns the testclasses include."),
+    className: str = Field(..., description="Technical ABAP class name that owns the existing testclasses include. If the include does not exist, call source_class_testclasses_create once first. This tool locks and unlocks the testclasses include internally; do not call source_class_lock or source_class_unlock before or after it."),
     request: ClassTestclassesUpdateRequest = Field(..., description="Full ABAP source code to store in the `testclasses` include."),
     transportNumber: str = Field("", description="Transport request number to forward when the class belongs to a transportable package."),
 ) -> ClassTestclassesUpdateResponse:
-    """Update the raw source code of the `testclasses` include of one ABAP class. The tool locks the class, writes the new source, and unlocks it automatically."""
+    """Update the raw source code of the `testclasses` include of one ABAP class. The tool locks the testclasses include, writes the new source, and unlocks it automatically."""
     return call_class_testclasses_update(systemId, className, request, transportNumber)
 
 
@@ -3032,11 +3032,11 @@ def source_class_testclasses_read_to_file(
 @mcp.tool()
 def source_class_testclasses_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the class testclasses include should be updated."),
-    className: str = Field(..., description="Technical ABAP class name that owns the testclasses include."),
+    className: str = Field(..., description="Technical ABAP class name that owns the existing testclasses include. If the include does not exist, call source_class_testclasses_create once first. This tool locks and unlocks the testclasses include internally; do not call source_class_lock or source_class_unlock before or after it."),
     filePath: str = Field(..., description="Absolute local file path of the raw source code to upload."),
     transportNumber: str = Field("", description="Transport request number to forward when the class belongs to a transportable package."),
 ) -> FileTransferResponse:
-    """Upload the `testclasses` include of one ABAP class from a local file. The tool locks the class, writes the new source, and unlocks it automatically."""
+    """Upload the `testclasses` include of one ABAP class from a local file. The tool locks the testclasses include, writes the new source, and unlocks it automatically."""
     return call_class_testclasses_write_from_file(systemId, className, filePath, transportNumber)
 # endregion
 
@@ -3063,7 +3063,7 @@ def source_program_read(
 @mcp.tool()
 def source_program_lock(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP program should be locked."),
-    name: str = Field(..., description="Technical ABAP program name to lock.")
+    name: str = Field(..., description="Technical ABAP program name to lock. Low-level operation for manual workflows only; do not call it before source_program_update, source_program_write_from_file, or symbols mutation tools because those tools manage locking internally.")
 ) -> ProgramLockResponse:
     """Lock one ABAP program through the ADT lock action and return the lock handle required for raw source updates."""
     return call_program_lock(systemId, name)
@@ -3082,7 +3082,7 @@ def source_program_unlock(
 @mcp.tool()
 def source_program_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP program source should be updated."),
-    name: str = Field(..., description="Technical ABAP program name to update."),
+    name: str = Field(..., description="Technical ABAP program name to update. This tool manages the required lock and unlock internally; do not call source_program_lock or source_program_unlock before or after it."),
     request: ProgramUpdateRequest = Field(..., description="Full ABAP source code to store in the program source."),
     transportNumber: str = Field("", description="Transport request number to forward when the program belongs to a transportable package.")
 ) -> ProgramUpdateResponse:
@@ -3126,7 +3126,7 @@ def source_program_read_to_file(
 @mcp.tool()
 def source_program_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP program source should be updated."),
-    name: str = Field(..., description="Technical ABAP program name to update."),
+    name: str = Field(..., description="Technical ABAP program name to update. This tool manages the required lock and unlock internally; do not call source_program_lock or source_program_unlock before or after it."),
     filePath: str = Field(..., description="Absolute local file path of the raw source code to upload."),
     transportNumber: str = Field("", description="Transport request number to forward when the program belongs to a transportable package.")
 ) -> FileTransferResponse:
@@ -3146,7 +3146,7 @@ def source_program_symbols_read(
 @mcp.tool()
 def source_program_symbols_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP program text symbols should be updated."),
-    name: str = Field(..., description="Technical ABAP program name whose text symbols should be updated."),
+    name: str = Field(..., description="Technical ABAP program name whose text symbols should be updated. This tool manages the required symbols-resource lock and unlock internally; do not call source_program_lock or source_program_unlock."),
     request: SourceSymbolsUpdateRequest = Field(..., description="Full text symbols content to store in the program symbols resource."),
 ) -> SourceSymbolsUpdateResponse:
     """Update the text symbols of one ABAP program through its `/source/symbols` endpoint. The tool locks the program, writes the new symbols, and unlocks it automatically."""
@@ -3166,7 +3166,7 @@ def source_program_symbols_read_to_file(
 @mcp.tool()
 def source_program_symbols_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the ABAP program text symbols should be updated."),
-    name: str = Field(..., description="Technical ABAP program name whose text symbols should be updated."),
+    name: str = Field(..., description="Technical ABAP program name whose text symbols should be updated. This tool manages the required symbols-resource lock and unlock internally; do not call source_program_lock or source_program_unlock."),
     filePath: str = Field(..., description="Absolute local file path of the raw text symbols to upload."),
 ) -> FileTransferResponse:
     """Upload text symbols from a local file to one existing ABAP program through its `/source/symbols` endpoint. The tool locks the program, writes the new symbols, and unlocks it automatically."""
@@ -3303,7 +3303,7 @@ def cts_transport_read(
 @mcp.tool()
 def cts_transport_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the transport request will be updated."),
-    transportNumber: str = Field(..., description="Transport request number to update."),
+    transportNumber: str = Field(..., description="Transport request number to update. This tool manages the required transport lock and unlock internally; do not perform a separate lock or unlock."),
     request: CtsTransportUpdateRequest = Field(..., description="Editable fields of the transport request. The tool locks the request, updates it, and unlocks it automatically."),
 ) -> CtsTransportUpdateResponse:
     """Update a transport request in one configured SAP system through the ADT transport organizer endpoint."""
@@ -3343,7 +3343,7 @@ def cts_transport_read_to_file(
 @mcp.tool()
 def cts_transport_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the transport request will be updated."),
-    transportNumber: str = Field(..., description="Transport request number to update."),
+    transportNumber: str = Field(..., description="Transport request number to update. This tool manages the required transport lock and unlock internally; do not perform a separate lock or unlock."),
     filePath: str = Field(..., description="Absolute local file path of the raw transport XML to upload."),
 ) -> FileTransferResponse:
     """Upload one transport request from a local file using the raw ADT XML format. The tool locks the request, writes the XML, and unlocks it automatically."""
@@ -3376,7 +3376,7 @@ def package_read(
 @mcp.tool()
 def package_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the package will be updated."),
-    name: str = Field(..., description="Technical package name to update."),
+    name: str = Field(..., description="Technical package name to update. This tool manages the required package lock and unlock internally; do not perform a separate lock or unlock."),
     request: PackageUpdateRequest = Field(..., description="Metadata payload used to update the package.")
 ) -> PackageUpdateResponse:
     """Update one ABAP package through its ADT resource URI."""
@@ -3407,7 +3407,7 @@ def ddic_table_db_settings_read(
 @mcp.tool()
 def ddic_table_db_settings_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the table database settings will be updated."),
-    tableName: str = Field(..., description="Technical name of the DDIC table whose database settings will be updated."),
+    tableName: str = Field(..., description="Technical name of the DDIC table whose database settings will be updated. This tool manages the required settings lock and unlock internally; do not call separate lock or unlock tools."),
     request: DdicTableDbSettingsUpdateRequest = Field(..., description="Set only the database settings attributes that should change. Omitted fields are kept as they are."),
     transportNumber: str = Field("", description="Transport request number to use when updating database settings in a transportable package. Leave empty for local objects such as $TMP.")
 ) -> DdicTableDbSettingsUpdateResponse:
@@ -3460,7 +3460,7 @@ def ddic_table_db_settings_read_to_file(
 @mcp.tool()
 def ddic_table_db_settings_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the table database settings will be updated."),
-    tableName: str = Field(..., description="Technical name of the DDIC table whose database settings will be uploaded."),
+    tableName: str = Field(..., description="Technical name of the DDIC table whose database settings will be uploaded. This tool manages the required settings lock and unlock internally; do not call separate lock or unlock tools."),
     filePath: str = Field(..., description="Absolute local file path of the raw ADT XML to upload. The file must keep the same format returned by ddic_table_db_settings_read_to_file."),
     transportNumber: str = Field("", description="Transport request number to use when updating database settings in a transportable package. Leave empty for local objects such as $TMP.")
 ) -> FileTransferResponse:
@@ -3533,7 +3533,7 @@ def ddic_table_read(
 @mcp.tool()
 def ddic_table_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC table will be updated."),
-    name: str = Field(..., description="Technical name of the DDIC table to update."),
+    name: str = Field(..., description="Technical name of the DDIC table to update. This tool manages the required lock and unlock internally; do not call separate lock or unlock tools before or after it."),
     request: DdicTableUpdateRequest = Field(..., description="Replacement source for the DDIC table. Provide the full source/main content to store."),
     transportNumber: str = Field("", description="Transport request number to use when updating a DDIC table in a transportable package. Leave empty for local objects such as $TMP.")
 ) -> DdicTableUpdateResponse:
@@ -3600,7 +3600,7 @@ def ddic_table_read_to_file(
 @mcp.tool()
 def ddic_table_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC table will be updated."),
-    name: str = Field(..., description="Technical name of the DDIC table to upload."),
+    name: str = Field(..., description="Technical name of the DDIC table to upload. This tool manages the required lock and unlock internally; do not call separate lock or unlock tools before or after it."),
     filePath: str = Field(..., description="Absolute local file path of the raw `source/main` text to upload. The file must keep the same format returned by ddic_table_read_to_file."),
     transportNumber: str = Field("", description="Transport request number to use when updating a DDIC table in a transportable package. Leave empty for local objects such as $TMP.")
 ) -> FileTransferResponse:
@@ -3673,7 +3673,7 @@ def ddic_dataelement_read(
 @mcp.tool()
 def ddic_dataelement_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC data element will be updated."),
-    name: str = Field(..., description="Technical name of the DDIC data element to update."),
+    name: str = Field(..., description="Technical name of the DDIC data element to update. This tool manages the required lock and unlock internally; do not call separate lock or unlock tools before or after it."),
     request: DdicDataElementUpdateRequest = Field(..., description="Set only the DDIC data element attributes that should change. Omitted fields are kept as they are."),
     transportNumber: str = Field("", description="Transport request number to use when updating a DDIC data element in a transportable package. Leave empty for local objects such as $TMP.")
 ) -> DdicDataElementUpdateResponse:
@@ -3740,7 +3740,7 @@ def ddic_dataelement_read_to_file(
 @mcp.tool()
 def ddic_dataelement_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC data element will be updated."),
-    name: str = Field(..., description="Technical name of the DDIC data element to upload."),
+    name: str = Field(..., description="Technical name of the DDIC data element to upload. This tool manages the required lock and unlock internally; do not call separate lock or unlock tools before or after it."),
     filePath: str = Field(..., description="Absolute local file path of the raw ADT XML to upload. The file must keep the same format returned by ddic_dataelement_read_to_file."),
     transportNumber: str = Field("", description="Transport request number to use when updating a DDIC data element in a transportable package. Leave empty for local objects such as $TMP.")
 ) -> FileTransferResponse:
@@ -3813,7 +3813,7 @@ def ddic_domain_read(
 @mcp.tool()
 def ddic_domain_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC domain will be updated."),
-    name: str = Field(..., description="Technical name of the DDIC domain to update."),
+    name: str = Field(..., description="Technical name of the DDIC domain to update. This tool manages the required lock and unlock internally; do not call separate lock or unlock tools before or after it."),
     request: DdicDomainUpdateRequest = Field(..., description="Set only the DDIC domain attributes that should change. Omitted fields are kept as they are."),
     transportNumber: str = Field("", description="Transport request number to use when updating a DDIC domain in a transportable package. Leave empty for local objects such as $TMP.")
 ) -> DdicDomainUpdateResponse:
@@ -3880,7 +3880,7 @@ def ddic_domain_read_to_file(
 @mcp.tool()
 def ddic_domain_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the DDIC domain will be updated."),
-    name: str = Field(..., description="Technical name of the DDIC domain to upload."),
+    name: str = Field(..., description="Technical name of the DDIC domain to upload. This tool manages the required lock and unlock internally; do not call separate lock or unlock tools before or after it."),
     filePath: str = Field(..., description="Absolute local file path of the raw ADT XML to upload. The file must keep the same format returned by ddic_domain_read_to_file."),
     transportNumber: str = Field("", description="Transport request number to use when updating a DDIC domain in a transportable package. Leave empty for local objects such as $TMP.")
 ) -> FileTransferResponse:
@@ -3945,7 +3945,7 @@ def ddic_ddl_source_read(
 @mcp.tool()
 def ddic_ddl_source_lock(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the CDS DDL source should be locked."),
-    name: str = Field(..., description="Technical name of the CDS DDL source to lock.")
+    name: str = Field(..., description="Technical name of the CDS DDL source to lock. Low-level operation for manual workflows only; do not call it before ddic_ddl_source_update or ddic_ddl_source_write_from_file because those tools manage locking internally.")
 ) -> DdicDdlSourceLockResponse:
     """Lock one CDS DDL source through the ADT lock action and return the lock handle required for source updates."""
     return call_ddic_ddl_source_lock(systemId, name)
@@ -3964,7 +3964,7 @@ def ddic_ddl_source_unlock(
 @mcp.tool()
 def ddic_ddl_source_update(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the CDS DDL source should be updated."),
-    name: str = Field(..., description="Technical name of the CDS DDL source to update."),
+    name: str = Field(..., description="Technical name of the CDS DDL source to update. This tool manages the required lock and unlock internally; do not call ddic_ddl_source_lock or ddic_ddl_source_unlock before or after it."),
     request: DdicDdlSourceUpdateRequest = Field(..., description="Full CDS source code to store in the DDL source."),
     transportNumber: str = Field("", description="Transport request number to forward when the DDL source belongs to a transportable package.")
 ) -> DdicDdlSourceUpdateResponse:
@@ -4007,7 +4007,7 @@ def ddic_ddl_source_read_to_file(
 @mcp.tool()
 def ddic_ddl_source_write_from_file(
     systemId: str = Field(..., description="Identifier of the configured SAP system where the CDS DDL source should be updated."),
-    name: str = Field(..., description="Technical name of the CDS DDL source to update."),
+    name: str = Field(..., description="Technical name of the CDS DDL source to update. This tool manages the required lock and unlock internally; do not call ddic_ddl_source_lock or ddic_ddl_source_unlock before or after it."),
     filePath: str = Field(..., description="Absolute local file path of the CDS source to upload. The file must keep the same format returned by ddic_ddl_source_read_to_file."),
     transportNumber: str = Field("", description="Transport request number to forward when the DDL source belongs to a transportable package. Leave empty for local objects such as $TMP.")
 ) -> FileTransferResponse:
