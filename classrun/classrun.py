@@ -3,7 +3,7 @@ from urllib.parse import quote
 from pydantic import BaseModel, Field
 
 from configuration import get_session, get_system_config
-from connection.connection import ensure_login
+from connection.connection import build_adt_headers, ensure_login
 from generics import ApiResponse
 
 
@@ -44,6 +44,22 @@ def _classrun_uri(className: str) -> str:
     return f"{CLASSRUN_URI}/{quote(normalized_name, safe='')}"
 
 
+def _is_classrun_error_output(output: str) -> bool:
+    """Return whether SAP encoded a classrun failure inside a successful HTTP response."""
+    return str(output or "").lstrip().lower().startswith("error:")
+
+
+def _clear_adt_context_cookie(session) -> None:
+    """Start classrun outside any stale stateful ADT editing context."""
+    cookie_jar = getattr(session, "cookies", None)
+    if cookie_jar is None:
+        return
+
+    for cookie in list(cookie_jar):
+        if cookie.name.lower() == "sap-contextid":
+            cookie_jar.clear(cookie.domain, cookie.path, cookie.name)
+
+
 def call_classrun_run(systemId: str, className: str) -> ClassRunResponse:
     """Execute one ABAP class through ADT classrun and return its text output."""
     try:
@@ -58,8 +74,13 @@ def call_classrun_run(systemId: str, className: str) -> ClassRunResponse:
         normalized_name = _normalize_class_name(className)
         uri = _classrun_uri(normalized_name)
         system_config = get_system_config(systemId)
-        headers = {"Accept": "text/plain"}
-        response = get_session(systemId).post(
+        headers = build_adt_headers(
+            sessionType="stateful",
+            extra={"Accept": "text/plain"},
+        )
+        session = get_session(systemId)
+        _clear_adt_context_cookie(session)
+        response = session.post(
             f"{system_config.server}{uri}",
             headers=headers,
         )
@@ -68,6 +89,15 @@ def call_classrun_run(systemId: str, className: str) -> ClassRunResponse:
             return ClassRunResponse.model_validate({
                 "result": False, "httpCode": response.status_code, "httpReason": response.reason,
                 "message": f"ADT rejected the classrun request: {response.text}",
+                "data": None,
+            })
+
+        if _is_classrun_error_output(response.text):
+            return ClassRunResponse.model_validate({
+                "result": False,
+                "httpCode": response.status_code,
+                "httpReason": response.reason,
+                "message": f"ADT classrun execution failed: {response.text.strip()}",
                 "data": None,
             })
 
